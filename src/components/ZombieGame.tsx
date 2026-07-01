@@ -13,29 +13,24 @@ type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
 type Weapon = {
   name: string;
   dmg: number;
-  fireRate: number; // ms between shots
-  spread: number; // radians
+  fireRate: number;
+  spread: number;
   pellets: number;
   speed: number;
   magSize: number;
   reserve: number;
   reloadMs: number;
-  cost: number; // 0 = starter
+  cost: number;
   auto: boolean;
 };
 
 const WEAPONS: Record<string, Weapon> = {
   pistol: { name: "M1911 Sidearm", dmg: 25, fireRate: 220, spread: 0.03, pellets: 1, speed: 900, magSize: 12, reserve: 96, reloadMs: 900, cost: 0, auto: false },
-  smg: { name: "MP-40 SMG", dmg: 22, fireRate: 90, spread: 0.08, pellets: 1, speed: 950, magSize: 32, reserve: 192, reloadMs: 1400, cost: 1000 },
-  shotgun: { name: "Trench Gun", dmg: 30, fireRate: 550, spread: 0.28, pellets: 7, speed: 850, magSize: 6, reserve: 48, reloadMs: 1700, cost: 1500, auto: false } as Weapon,
-  rifle: { name: "Battle Rifle", dmg: 55, fireRate: 130, spread: 0.04, pellets: 1, speed: 1100, magSize: 24, reserve: 160, reloadMs: 1600, cost: 2500 },
-  lmg: { name: "Heavy MG", dmg: 40, fireRate: 75, spread: 0.1, pellets: 1, speed: 1000, magSize: 75, reserve: 300, reloadMs: 2400, cost: 4000 },
+  smg: { name: "MP-40 SMG", dmg: 22, fireRate: 90, spread: 0.08, pellets: 1, speed: 950, magSize: 32, reserve: 192, reloadMs: 1400, cost: 1000, auto: true },
+  shotgun: { name: "Trench Gun", dmg: 30, fireRate: 550, spread: 0.28, pellets: 7, speed: 850, magSize: 6, reserve: 48, reloadMs: 1700, cost: 1500, auto: false },
+  rifle: { name: "Battle Rifle", dmg: 55, fireRate: 130, spread: 0.04, pellets: 1, speed: 1100, magSize: 24, reserve: 160, reloadMs: 1600, cost: 2500, auto: true },
+  lmg: { name: "Heavy MG", dmg: 40, fireRate: 75, spread: 0.1, pellets: 1, speed: 1000, magSize: 75, reserve: 300, reloadMs: 2400, cost: 4000, auto: true },
 };
-// ensure auto defaults
-for (const k of Object.keys(WEAPONS)) {
-  const w = WEAPONS[k];
-  if (w.auto === undefined) w.auto = k !== "pistol" && k !== "shotgun";
-}
 
 const MAP_W = 2000;
 const MAP_H = 2000;
