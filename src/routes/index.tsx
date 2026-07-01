@@ -1,24 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ZombieGame } from "@/components/ZombieGame";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Dead Sector — Top-Down Zombie Survival" },
+      {
+        name: "description",
+        content:
+          "Survive endless waves of the undead in Dead Sector, a round-based top-down zombie shooter. Rack up points, buy weapons, and hold the line.",
+      },
+      { property: "og:title", content: "Dead Sector — Top-Down Zombie Survival" },
+      {
+        property: "og:description",
+        content:
+          "Round-based top-down zombie shooter. Survive, earn points, upgrade your arsenal.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
+  return <ZombieGame />;
 }

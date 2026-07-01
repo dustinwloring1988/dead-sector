@@ -1,0 +1,816 @@
+import { useEffect, useRef, useState } from "react";
+
+// Dead Sector — original round-based top-down zombie shooter.
+// Not affiliated with any existing franchise.
+
+type Vec = { x: number; y: number };
+
+type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
+type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" };
+type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
+type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
+
+type Weapon = {
+  name: string;
+  dmg: number;
+  fireRate: number; // ms between shots
+  spread: number; // radians
+  pellets: number;
+  speed: number;
+  magSize: number;
+  reserve: number;
+  reloadMs: number;
+  cost: number; // 0 = starter
+  auto: boolean;
+};
+
+const WEAPONS: Record<string, Weapon> = {
+  pistol: { name: "M1911 Sidearm", dmg: 25, fireRate: 220, spread: 0.03, pellets: 1, speed: 900, magSize: 12, reserve: 96, reloadMs: 900, cost: 0, auto: false },
+  smg: { name: "MP-40 SMG", dmg: 22, fireRate: 90, spread: 0.08, pellets: 1, speed: 950, magSize: 32, reserve: 192, reloadMs: 1400, cost: 1000 },
+  shotgun: { name: "Trench Gun", dmg: 30, fireRate: 550, spread: 0.28, pellets: 7, speed: 850, magSize: 6, reserve: 48, reloadMs: 1700, cost: 1500, auto: false } as Weapon,
+  rifle: { name: "Battle Rifle", dmg: 55, fireRate: 130, spread: 0.04, pellets: 1, speed: 1100, magSize: 24, reserve: 160, reloadMs: 1600, cost: 2500 },
+  lmg: { name: "Heavy MG", dmg: 40, fireRate: 75, spread: 0.1, pellets: 1, speed: 1000, magSize: 75, reserve: 300, reloadMs: 2400, cost: 4000 },
+};
+// ensure auto defaults
+for (const k of Object.keys(WEAPONS)) {
+  const w = WEAPONS[k];
+  if (w.auto === undefined) w.auto = k !== "pistol" && k !== "shotgun";
+}
+
+const MAP_W = 2000;
+const MAP_H = 2000;
+
+export function ZombieGame() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [uiState, setUiState] = useState({
+    hp: 100,
+    points: 500,
+    round: 1,
+    zombiesLeft: 0,
+    mag: WEAPONS.pistol.magSize,
+    reserve: WEAPONS.pistol.reserve,
+    weaponName: WEAPONS.pistol.name,
+    reloading: false,
+    gameOver: false,
+    started: false,
+    message: "",
+  });
+  const [showHelp, setShowHelp] = useState(true);
+
+  const stateRef = useRef({
+    player: { x: MAP_W / 2, y: MAP_H / 2, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
+    keys: {} as Record<string, boolean>,
+    mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
+    bullets: [] as Bullet[],
+    zombies: [] as Zombie[],
+    particles: [] as Particle[],
+    pickups: [] as Pickup[],
+    points: 500,
+    round: 1,
+    zombiesToSpawn: 0,
+    zombiesAlive: 0,
+    spawnCooldown: 0,
+    lastShot: 0,
+    currentWeaponKey: "pistol" as keyof typeof WEAPONS,
+    weapons: {
+      pistol: { mag: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve, owned: true },
+    } as Record<string, { mag: number; reserve: number; owned: boolean }>,
+    reloadingUntil: 0,
+    lastDamageTime: 0,
+    hitFlash: 0,
+    camera: { x: 0, y: 0, shake: 0 },
+    buyStations: [
+      { x: MAP_W / 2 - 300, y: MAP_H / 2 - 300, weapon: "smg" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 + 300, y: MAP_H / 2 - 300, weapon: "shotgun" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 - 300, y: MAP_H / 2 + 300, weapon: "rifle" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 + 300, y: MAP_H / 2 + 300, weapon: "lmg" as keyof typeof WEAPONS },
+    ],
+    ammoBoxes: [
+      { x: MAP_W / 2, y: MAP_H / 2 - 500 },
+      { x: MAP_W / 2, y: MAP_H / 2 + 500 },
+    ],
+    messageUntil: 0,
+    message: "",
+    started: false,
+    gameOver: false,
+    lastTime: 0,
+    round0Started: false,
+  });
+
+  useEffect(() => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+    const s = stateRef.current;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const kd = (e: KeyboardEvent) => {
+      s.keys[e.key.toLowerCase()] = true;
+      if (e.key.toLowerCase() === "r") tryReload();
+      if (e.key.toLowerCase() === "e") tryInteract();
+    };
+    const ku = (e: KeyboardEvent) => {
+      s.keys[e.key.toLowerCase()] = false;
+    };
+    const mm = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      s.mouse.x = e.clientX - rect.left;
+      s.mouse.y = e.clientY - rect.top;
+    };
+    const md = () => {
+      s.mouse.down = true;
+      if (!s.started) {
+        s.started = true;
+        setUiState((u) => ({ ...u, started: true }));
+        setShowHelp(false);
+        startRound(1);
+      }
+    };
+    const mu = () => (s.mouse.down = false);
+
+    window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
+    canvas.addEventListener("mousemove", mm);
+    canvas.addEventListener("mousedown", md);
+    canvas.addEventListener("mouseup", mu);
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    function setMessage(m: string, ms = 1800) {
+      s.message = m;
+      s.messageUntil = performance.now() + ms;
+    }
+
+    function startRound(r: number) {
+      s.round = r;
+      const count = Math.floor(6 + r * 4 + Math.pow(r, 1.4));
+      s.zombiesToSpawn = count;
+      s.zombiesAlive = 0;
+      s.spawnCooldown = 500;
+      setMessage(`ROUND ${r}`, 2200);
+      setUiState((u) => ({ ...u, round: r, zombiesLeft: count }));
+    }
+
+    function tryReload() {
+      const key = s.currentWeaponKey;
+      const w = WEAPONS[key];
+      const pw = s.weapons[key];
+      if (!pw || pw.mag >= w.magSize || pw.reserve <= 0) return;
+      if (performance.now() < s.reloadingUntil) return;
+      s.reloadingUntil = performance.now() + w.reloadMs;
+      setUiState((u) => ({ ...u, reloading: true }));
+    }
+
+    function finishReload() {
+      const key = s.currentWeaponKey;
+      const w = WEAPONS[key];
+      const pw = s.weapons[key];
+      const need = w.magSize - pw.mag;
+      const take = Math.min(need, pw.reserve);
+      pw.mag += take;
+      pw.reserve -= take;
+      setUiState((u) => ({ ...u, mag: pw.mag, reserve: pw.reserve, reloading: false }));
+    }
+
+    function tryInteract() {
+      // buy station
+      for (const b of s.buyStations) {
+        const dx = b.x - s.player.x, dy = b.y - s.player.y;
+        if (dx * dx + dy * dy < 70 * 70) {
+          const w = WEAPONS[b.weapon];
+          const owned = s.weapons[b.weapon]?.owned;
+          const cost = owned ? Math.floor(w.cost * 0.5) : w.cost; // refill cost
+          if (s.points < cost) { setMessage(`Need ${cost} points`); return; }
+          s.points -= cost;
+          if (!owned) {
+            s.weapons[b.weapon] = { mag: w.magSize, reserve: w.reserve, owned: true };
+            s.currentWeaponKey = b.weapon;
+            setMessage(`Purchased ${w.name}`);
+          } else {
+            const pw = s.weapons[b.weapon];
+            pw.mag = w.magSize;
+            pw.reserve = w.reserve;
+            setMessage(`Refilled ${w.name}`);
+          }
+          syncWeaponUi();
+          return;
+        }
+      }
+      // ammo box
+      for (const a of s.ammoBoxes) {
+        const dx = a.x - s.player.x, dy = a.y - s.player.y;
+        if (dx * dx + dy * dy < 60 * 60) {
+          const cost = 500;
+          if (s.points < cost) { setMessage(`Ammo: ${cost} pts`); return; }
+          s.points -= cost;
+          const w = WEAPONS[s.currentWeaponKey];
+          const pw = s.weapons[s.currentWeaponKey];
+          pw.reserve = w.reserve;
+          setMessage("Max ammo!");
+          syncWeaponUi();
+          return;
+        }
+      }
+    }
+
+    function syncWeaponUi() {
+      const w = WEAPONS[s.currentWeaponKey];
+      const pw = s.weapons[s.currentWeaponKey];
+      setUiState((u) => ({ ...u, weaponName: w.name, mag: pw.mag, reserve: pw.reserve, points: s.points }));
+    }
+
+    function spawnZombie() {
+      // spawn just outside camera view
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 700;
+      const x = s.player.x + Math.cos(angle) * dist;
+      const y = s.player.y + Math.sin(angle) * dist;
+      const cx = Math.max(50, Math.min(MAP_W - 50, x));
+      const cy = Math.max(50, Math.min(MAP_H - 50, y));
+      let type: Zombie["type"] = "walker";
+      const rr = Math.random();
+      if (s.round >= 4 && rr < 0.15) type = "brute";
+      else if (s.round >= 2 && rr < 0.35) type = "runner";
+      let hp = 40 + s.round * 20;
+      let speed = 55 + s.round * 5;
+      let radius = 16;
+      if (type === "runner") { hp *= 0.6; speed = 130 + s.round * 6; radius = 13; }
+      if (type === "brute") { hp *= 3.5; speed = 45 + s.round * 3; radius = 24; }
+      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type });
+      s.zombiesAlive++;
+    }
+
+    function shoot() {
+      const key = s.currentWeaponKey;
+      const w = WEAPONS[key];
+      const pw = s.weapons[key];
+      const now = performance.now();
+      if (now < s.reloadingUntil) return;
+      if (now - s.lastShot < w.fireRate) return;
+      if (pw.mag <= 0) { tryReload(); return; }
+      s.lastShot = now;
+      pw.mag--;
+      const baseAngle = Math.atan2(s.mouse.worldY - s.player.y, s.mouse.worldX - s.player.x);
+      for (let i = 0; i < w.pellets; i++) {
+        const a = baseAngle + (Math.random() - 0.5) * w.spread * 2;
+        s.bullets.push({
+          x: s.player.x + Math.cos(a) * 20,
+          y: s.player.y + Math.sin(a) * 20,
+          vx: Math.cos(a) * w.speed,
+          vy: Math.sin(a) * w.speed,
+          life: 0.8,
+          dmg: w.dmg,
+        });
+      }
+      // muzzle flash
+      for (let i = 0; i < 4; i++) {
+        s.particles.push({
+          x: s.player.x + Math.cos(baseAngle) * 22,
+          y: s.player.y + Math.sin(baseAngle) * 22,
+          vx: Math.cos(baseAngle) * (200 + Math.random() * 100) + (Math.random() - 0.5) * 60,
+          vy: Math.sin(baseAngle) * (200 + Math.random() * 100) + (Math.random() - 0.5) * 60,
+          life: 0.08, maxLife: 0.08, color: "#ffcc55", size: 4,
+        });
+      }
+      s.camera.shake = Math.min(s.camera.shake + 3, 12);
+      syncWeaponUi();
+    }
+
+    function damagePlayer(amt: number) {
+      const now = performance.now();
+      if (now - s.lastDamageTime < 400) return;
+      s.lastDamageTime = now;
+      s.player.hp -= amt;
+      s.hitFlash = 1;
+      s.camera.shake = Math.min(s.camera.shake + 8, 16);
+      if (s.player.hp <= 0) {
+        s.player.hp = 0;
+        s.gameOver = true;
+        setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+      }
+      setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
+    }
+
+    function killZombie(z: Zombie, headshot = false) {
+      s.zombiesAlive--;
+      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : 60) + (headshot ? 30 : 0);
+      s.points += pts;
+      // particles
+      for (let i = 0; i < 18; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 180;
+        s.particles.push({
+          x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.6 + Math.random() * 0.3, maxLife: 0.9,
+          color: Math.random() < 0.6 ? "#7a0d0d" : "#3a0808", size: 3 + Math.random() * 3,
+        });
+      }
+      // random pickup
+      if (Math.random() < 0.06) {
+        s.pickups.push({ x: z.x, y: z.y, kind: Math.random() < 0.5 ? "ammo" : "health", life: 15 });
+      }
+      setUiState((u) => ({ ...u, points: s.points, zombiesLeft: s.zombiesToSpawn + s.zombiesAlive }));
+    }
+
+    function update(dt: number) {
+      if (!s.started || s.gameOver) return;
+
+      // movement
+      let mx = 0, my = 0;
+      if (s.keys["w"] || s.keys["arrowup"]) my -= 1;
+      if (s.keys["s"] || s.keys["arrowdown"]) my += 1;
+      if (s.keys["a"] || s.keys["arrowleft"]) mx -= 1;
+      if (s.keys["d"] || s.keys["arrowright"]) mx += 1;
+      const len = Math.hypot(mx, my);
+      if (len > 0) { mx /= len; my /= len; }
+      const sp = s.player.speed * dt;
+      s.player.x = Math.max(20, Math.min(MAP_W - 20, s.player.x + mx * sp));
+      s.player.y = Math.max(20, Math.min(MAP_H - 20, s.player.y + my * sp));
+
+      // world mouse
+      s.mouse.worldX = s.mouse.x + s.camera.x;
+      s.mouse.worldY = s.mouse.y + s.camera.y;
+      s.player.angle = Math.atan2(s.mouse.worldY - s.player.y, s.mouse.worldX - s.player.x);
+
+      // reload finish
+      if (s.reloadingUntil > 0 && performance.now() >= s.reloadingUntil) {
+        s.reloadingUntil = 0;
+        finishReload();
+      }
+
+      // shoot
+      const w = WEAPONS[s.currentWeaponKey];
+      if (s.mouse.down) {
+        if (w.auto) shoot();
+        else if (performance.now() - s.lastShot > w.fireRate) shoot();
+      }
+
+      // bullets
+      for (let i = s.bullets.length - 1; i >= 0; i--) {
+        const b = s.bullets[i];
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        b.life -= dt;
+        let hit = false;
+        for (let j = s.zombies.length - 1; j >= 0; j--) {
+          const z = s.zombies[j];
+          const dx = z.x - b.x, dy = z.y - b.y;
+          if (dx * dx + dy * dy < z.radius * z.radius) {
+            z.hp -= b.dmg;
+            hit = true;
+            // impact particles
+            for (let k = 0; k < 5; k++) {
+              const a = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: b.x, y: b.y, vx: Math.cos(a) * 80, vy: Math.sin(a) * 80,
+                life: 0.3, maxLife: 0.3, color: "#a11", size: 2 + Math.random() * 2,
+              });
+            }
+            if (z.hp <= 0) {
+              s.zombies.splice(j, 1);
+              killZombie(z);
+            }
+            break;
+          }
+        }
+        if (hit || b.life <= 0 || b.x < 0 || b.y < 0 || b.x > MAP_W || b.y > MAP_H) {
+          s.bullets.splice(i, 1);
+        }
+      }
+
+      // zombies
+      for (const z of s.zombies) {
+        const dx = s.player.x - z.x, dy = s.player.y - z.y;
+        const d = Math.hypot(dx, dy) || 1;
+        z.x += (dx / d) * z.speed * dt;
+        z.y += (dy / d) * z.speed * dt;
+        if (d < z.radius + s.player.r) {
+          damagePlayer(z.type === "brute" ? 25 : z.type === "runner" ? 12 : 15);
+        }
+      }
+      // separate zombies
+      for (let i = 0; i < s.zombies.length; i++) {
+        for (let j = i + 1; j < s.zombies.length; j++) {
+          const a = s.zombies[i], b = s.zombies[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const min = a.radius + b.radius;
+          if (dist < min) {
+            const push = (min - dist) / 2;
+            const nx = dx / dist, ny = dy / dist;
+            a.x -= nx * push; a.y -= ny * push;
+            b.x += nx * push; b.y += ny * push;
+          }
+        }
+      }
+
+      // spawning
+      if (s.zombiesToSpawn > 0) {
+        s.spawnCooldown -= dt * 1000;
+        if (s.spawnCooldown <= 0 && s.zombiesAlive < Math.min(24, 8 + s.round * 2)) {
+          spawnZombie();
+          s.zombiesToSpawn--;
+          s.spawnCooldown = Math.max(200, 800 - s.round * 40);
+        }
+      }
+      if (s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
+        // next round
+        setTimeout(() => startRound(s.round + 1), 3000);
+        s.zombiesToSpawn = -1; // guard
+      }
+
+      // pickups
+      for (let i = s.pickups.length - 1; i >= 0; i--) {
+        const p = s.pickups[i];
+        p.life -= dt;
+        const dx = p.x - s.player.x, dy = p.y - s.player.y;
+        if (dx * dx + dy * dy < 30 * 30) {
+          if (p.kind === "health") {
+            s.player.hp = Math.min(s.player.maxHp, s.player.hp + 40);
+            setUiState((u) => ({ ...u, hp: s.player.hp }));
+          } else {
+            const pw = s.weapons[s.currentWeaponKey];
+            const ww = WEAPONS[s.currentWeaponKey];
+            pw.reserve = Math.min(ww.reserve, pw.reserve + Math.floor(ww.magSize * 2));
+            syncWeaponUi();
+          }
+          s.pickups.splice(i, 1);
+          continue;
+        }
+        if (p.life <= 0) s.pickups.splice(i, 1);
+      }
+
+      // particles
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vx *= 0.92; p.vy *= 0.92;
+        p.life -= dt;
+        if (p.life <= 0) s.particles.splice(i, 1);
+      }
+
+      // camera
+      const targetX = s.player.x - canvas.width / 2;
+      const targetY = s.player.y - canvas.height / 2;
+      s.camera.x += (targetX - s.camera.x) * 0.15;
+      s.camera.y += (targetY - s.camera.y) * 0.15;
+      if (s.camera.shake > 0) {
+        s.camera.x += (Math.random() - 0.5) * s.camera.shake;
+        s.camera.y += (Math.random() - 0.5) * s.camera.shake;
+        s.camera.shake *= 0.85;
+        if (s.camera.shake < 0.1) s.camera.shake = 0;
+      }
+      s.hitFlash *= 0.9;
+    }
+
+    function drawGrid() {
+      ctx.strokeStyle = "#1a1f1a";
+      ctx.lineWidth = 1;
+      const step = 100;
+      const startX = Math.floor(s.camera.x / step) * step;
+      const startY = Math.floor(s.camera.y / step) * step;
+      for (let x = startX; x < s.camera.x + canvas.width + step; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x - s.camera.x, 0);
+        ctx.lineTo(x - s.camera.x, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = startY; y < s.camera.y + canvas.height + step; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y - s.camera.y);
+        ctx.lineTo(canvas.width, y - s.camera.y);
+        ctx.stroke();
+      }
+    }
+
+    function drawMapBounds() {
+      ctx.strokeStyle = "#3a2a1a";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(-s.camera.x, -s.camera.y, MAP_W, MAP_H);
+    }
+
+    function drawBuyStations() {
+      for (const b of s.buyStations) {
+        const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
+        if (sx < -100 || sy < -100 || sx > canvas.width + 100 || sy > canvas.height + 100) continue;
+        const w = WEAPONS[b.weapon];
+        const owned = s.weapons[b.weapon]?.owned;
+        ctx.fillStyle = "#2a1a0a";
+        ctx.strokeStyle = owned ? "#4a7c3a" : "#c9a24a";
+        ctx.lineWidth = 3;
+        ctx.fillRect(sx - 40, sy - 40, 80, 80);
+        ctx.strokeRect(sx - 40, sy - 40, 80, 80);
+        ctx.fillStyle = "#c9a24a";
+        ctx.font = "bold 11px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(w.name.split(" ")[0].toUpperCase(), sx, sy - 5);
+        ctx.fillStyle = owned ? "#7fbf5f" : "#e0e0e0";
+        ctx.fillText(owned ? `REFILL ${Math.floor(w.cost * 0.5)}` : `${w.cost}`, sx, sy + 12);
+        const dx = b.x - s.player.x, dy = b.y - s.player.y;
+        if (dx * dx + dy * dy < 100 * 100) {
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 12px monospace";
+          ctx.fillText("[E] BUY", sx, sy - 55);
+        }
+      }
+      for (const a of s.ammoBoxes) {
+        const sx = a.x - s.camera.x, sy = a.y - s.camera.y;
+        ctx.fillStyle = "#1a2a1a";
+        ctx.strokeStyle = "#4a7c3a";
+        ctx.lineWidth = 3;
+        ctx.fillRect(sx - 30, sy - 30, 60, 60);
+        ctx.strokeRect(sx - 30, sy - 30, 60, 60);
+        ctx.fillStyle = "#4a7c3a";
+        ctx.font = "bold 11px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("AMMO", sx, sy - 3);
+        ctx.fillText("500", sx, sy + 12);
+        const dx = a.x - s.player.x, dy = a.y - s.player.y;
+        if (dx * dx + dy * dy < 100 * 100) {
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 12px monospace";
+          ctx.fillText("[E] REFILL", sx, sy - 45);
+        }
+      }
+    }
+
+    function drawPickups() {
+      for (const p of s.pickups) {
+        const sx = p.x - s.camera.x, sy = p.y - s.camera.y;
+        const pulse = 0.7 + Math.sin(performance.now() / 200) * 0.3;
+        ctx.fillStyle = p.kind === "health" ? `rgba(200,60,60,${pulse})` : `rgba(230,200,60,${pulse})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#000";
+        ctx.font = "bold 12px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(p.kind === "health" ? "+" : "A", sx, sy + 4);
+      }
+    }
+
+    function drawPlayer() {
+      const sx = s.player.x - s.camera.x, sy = s.player.y - s.camera.y;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(s.player.angle);
+      // gun
+      ctx.fillStyle = "#333";
+      ctx.fillRect(8, -3, 22, 6);
+      // body
+      ctx.fillStyle = "#4a5a3a";
+      ctx.beginPath();
+      ctx.arc(0, 0, s.player.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#2a3a1a";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // helmet
+      ctx.fillStyle = "#2a2a2a";
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawZombies() {
+      for (const z of s.zombies) {
+        const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
+        if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+        const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, z.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#7a0d0d";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // eyes
+        ctx.fillStyle = "#ff3030";
+        const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+        const ex = Math.cos(ang) * (z.radius * 0.4);
+        const ey = Math.sin(ang) * (z.radius * 0.4);
+        const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+        ctx.beginPath();
+        ctx.arc(sx + ex + perpX, sy + ey + perpY, 2, 0, Math.PI * 2);
+        ctx.arc(sx + ex - perpX, sy + ey - perpY, 2, 0, Math.PI * 2);
+        ctx.fill();
+        // hp bar
+        if (z.hp < z.maxHp) {
+          ctx.fillStyle = "#000";
+          ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
+          ctx.fillStyle = "#c93030";
+          ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
+        }
+      }
+    }
+
+    function drawBullets() {
+      ctx.fillStyle = "#ffdd66";
+      for (const b of s.bullets) {
+        const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawParticles() {
+      for (const p of s.particles) {
+        const sx = p.x - s.camera.x, sy = p.y - s.camera.y;
+        ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(sx - p.size / 2, sy - p.size / 2, p.size, p.size);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawFog() {
+      // vignette + darkness
+      const grad = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 100,
+        canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) * 0.7
+      );
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(1, "rgba(0,0,0,0.75)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawMessage() {
+      if (performance.now() < s.messageUntil && s.message) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.font = "bold 48px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(s.message, canvas.width / 2 + 2, canvas.height / 2 - 100 + 2);
+        ctx.fillStyle = "#c9a24a";
+        ctx.fillText(s.message, canvas.width / 2, canvas.height / 2 - 100);
+      }
+    }
+
+    function drawHitFlash() {
+      if (s.hitFlash > 0.01) {
+        ctx.fillStyle = `rgba(200,20,20,${s.hitFlash * 0.4})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    function render() {
+      ctx.fillStyle = "#0a0d0a";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      drawGrid();
+      drawMapBounds();
+      drawBuyStations();
+      drawPickups();
+      drawParticles();
+      drawZombies();
+      drawPlayer();
+      drawBullets();
+      drawFog();
+      drawHitFlash();
+      drawMessage();
+    }
+
+    let raf = 0;
+    const loop = (t: number) => {
+      const dt = Math.min(0.05, (t - (s.lastTime || t)) / 1000);
+      s.lastTime = t;
+      update(dt);
+      render();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("keydown", kd);
+      window.removeEventListener("keyup", ku);
+    };
+  }, []);
+
+  const restart = () => window.location.reload();
+
+  return (
+    <div className="relative w-screen h-screen overflow-hidden bg-black select-none">
+      <canvas ref={canvasRef} className="block cursor-crosshair" />
+
+      {/* HUD */}
+      {uiState.started && !uiState.gameOver && (
+        <>
+          <div className="absolute top-4 left-4 font-mono text-[#c9a24a] pointer-events-none">
+            <div className="text-3xl font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+              ROUND {uiState.round}
+            </div>
+            <div className="mt-2 text-sm text-[#a89060]">
+              ZOMBIES: {uiState.zombiesLeft}
+            </div>
+          </div>
+
+          <div className="absolute top-4 right-4 font-mono text-right pointer-events-none">
+            <div className="text-2xl font-bold text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+              {uiState.points} PTS
+            </div>
+          </div>
+
+          <div className="absolute bottom-4 left-4 font-mono pointer-events-none">
+            <div className="bg-black/60 border border-[#3a3a1a] px-4 py-2 rounded-sm">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-xs text-[#8a8a6a]">HEALTH</div>
+              </div>
+              <div className="w-56 h-3 bg-[#1a0505] border border-[#3a1010]">
+                <div
+                  className="h-full bg-gradient-to-r from-[#8a1010] to-[#c93030] transition-all"
+                  style={{ width: `${uiState.hp}%` }}
+                />
+              </div>
+              <div className="text-xs text-[#a89060] mt-1">{uiState.hp} / 100</div>
+            </div>
+          </div>
+
+          <div className="absolute bottom-4 right-4 font-mono text-right pointer-events-none">
+            <div className="bg-black/60 border border-[#3a3a1a] px-4 py-2 rounded-sm">
+              <div className="text-xs text-[#8a8a6a]">{uiState.weaponName.toUpperCase()}</div>
+              <div className="text-3xl font-bold text-[#c9a24a]">
+                {uiState.reloading ? "..." : uiState.mag}
+                <span className="text-lg text-[#8a7a4a]"> / {uiState.reserve}</span>
+              </div>
+              {uiState.reloading && (
+                <div className="text-xs text-[#c93030] animate-pulse">RELOADING</div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Start screen */}
+      {!uiState.started && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+          <div className="text-center font-mono max-w-2xl px-6">
+            <h1 className="text-6xl md:text-7xl font-bold text-[#c9a24a] tracking-widest drop-shadow-[0_4px_10px_rgba(201,162,74,0.3)]">
+              DEAD SECTOR
+            </h1>
+            <p className="text-[#a89060] mt-2 tracking-[0.4em] text-sm">SURVIVE THE UNDEAD</p>
+            {showHelp && (
+              <div className="mt-10 text-left text-[#c0c0a0] text-sm space-y-2 bg-black/40 border border-[#3a3a1a] p-6">
+                <div><span className="text-[#c9a24a] font-bold">WASD</span> — Move</div>
+                <div><span className="text-[#c9a24a] font-bold">MOUSE</span> — Aim</div>
+                <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
+                <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
+                <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
+                <div className="pt-2 text-[#8a8a6a] text-xs">
+                  Kill zombies to earn points. Spend points at the yellow buy stations to unlock stronger weapons.
+                  Green boxes refill ammo. Survive as many rounds as you can.
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                stateRef.current.started = true;
+                setUiState((u) => ({ ...u, started: true }));
+                setShowHelp(false);
+                // trigger round 1
+                const s = stateRef.current;
+                s.round = 0;
+                // fake mouse down to trigger start already handled; call startRound directly:
+                setTimeout(() => {
+                  const evt = new MouseEvent("mousedown");
+                  canvasRef.current?.dispatchEvent(evt);
+                }, 10);
+              }}
+              className="mt-10 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
+            >
+              DEPLOY
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Game over */}
+      {uiState.gameOver && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+          <div className="text-center font-mono">
+            <h1 className="text-7xl font-bold text-[#c93030] tracking-widest">
+              YOU DIED
+            </h1>
+            <p className="text-[#a89060] mt-4 text-xl">
+              SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
+            </p>
+            <p className="text-[#8a8a6a] mt-1">{uiState.points} TOTAL POINTS</p>
+            <button
+              onClick={restart}
+              className="mt-10 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
+            >
+              REDEPLOY
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
