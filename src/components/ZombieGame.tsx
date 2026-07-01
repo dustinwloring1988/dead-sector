@@ -98,6 +98,92 @@ export function ZombieGame() {
     const ctx = canvas.getContext("2d")!;
     const s = stateRef.current;
 
+    // Generate obstacles once
+    if (s.obstacles.length === 0) {
+      const cx = MAP_W / 2, cy = MAP_H / 2;
+      const rects: typeof s.obstacles = [
+        // central sandbag pit around spawn (leave gaps)
+        { x: cx - 90, y: cy - 140, w: 180, h: 18, type: "fence" },
+        { x: cx - 140, y: cy + 122, w: 90, h: 18, type: "fence" },
+        { x: cx + 50, y: cy + 122, w: 90, h: 18, type: "fence" },
+        { x: cx - 158, y: cy - 90, w: 18, h: 180, type: "fence" },
+        { x: cx + 140, y: cy - 90, w: 18, h: 180, type: "fence" },
+        // crate stacks near buy stations
+        { x: cx - 380, y: cy - 240, w: 46, h: 46, type: "crate" },
+        { x: cx - 340, y: cy - 200, w: 40, h: 40, type: "crate" },
+        { x: cx + 340, y: cy - 240, w: 46, h: 46, type: "crate" },
+        { x: cx + 320, y: cy + 220, w: 44, h: 44, type: "crate" },
+        { x: cx - 360, y: cy + 240, w: 50, h: 50, type: "crate" },
+        // rocks scattered
+        { x: cx - 620, y: cy - 100, w: 80, h: 70, type: "rock" },
+        { x: cx + 560, y: cy + 80, w: 90, h: 80, type: "rock" },
+        { x: cx - 200, y: cy - 640, w: 70, h: 60, type: "rock" },
+        { x: cx + 220, y: cy + 600, w: 85, h: 70, type: "rock" },
+        { x: cx - 700, y: cy + 500, w: 100, h: 90, type: "rock" },
+        { x: cx + 680, y: cy - 520, w: 95, h: 85, type: "rock" },
+        { x: cx - 500, y: cy + 640, w: 70, h: 60, type: "rock" },
+        { x: cx + 500, y: cy - 700, w: 80, h: 70, type: "rock" },
+        // long fences forming lanes
+        { x: cx - 800, y: cy - 400, w: 200, h: 16, type: "fence" },
+        { x: cx + 600, y: cy - 400, w: 200, h: 16, type: "fence" },
+        { x: cx - 800, y: cy + 400, w: 200, h: 16, type: "fence" },
+        { x: cx + 600, y: cy + 400, w: 200, h: 16, type: "fence" },
+        { x: cx - 900, y: cy - 200, w: 16, h: 200, type: "fence" },
+        { x: cx + 884, y: cy - 200, w: 16, h: 200, type: "fence" },
+        // barrels
+        { x: cx - 450, y: cy - 500, w: 28, h: 28, type: "barrel" },
+        { x: cx + 450, y: cy - 480, w: 28, h: 28, type: "barrel" },
+        { x: cx - 480, y: cy + 460, w: 28, h: 28, type: "barrel" },
+        { x: cx + 470, y: cy + 490, w: 28, h: 28, type: "barrel" },
+        { x: cx - 250, y: cy + 340, w: 28, h: 28, type: "barrel" },
+        { x: cx + 260, y: cy - 340, w: 28, h: 28, type: "barrel" },
+        // outer wall crates
+        { x: cx - 850, y: cy + 750, w: 60, h: 60, type: "crate" },
+        { x: cx + 820, y: cy - 780, w: 60, h: 60, type: "crate" },
+        { x: cx - 780, y: cy - 800, w: 55, h: 55, type: "crate" },
+        { x: cx + 770, y: cy + 780, w: 55, h: 55, type: "crate" },
+      ];
+      s.obstacles = rects;
+    }
+
+    // Collision helpers
+    const circleRectOverlap = (cx: number, cy: number, r: number, rx: number, ry: number, rw: number, rh: number) => {
+      const closestX = Math.max(rx, Math.min(cx, rx + rw));
+      const closestY = Math.max(ry, Math.min(cy, ry + rh));
+      const dx = cx - closestX, dy = cy - closestY;
+      return dx * dx + dy * dy < r * r;
+    };
+    const resolveCircleAgainstObstacles = (pos: { x: number; y: number }, r: number) => {
+      for (const o of s.obstacles) {
+        if (!circleRectOverlap(pos.x, pos.y, r, o.x, o.y, o.w, o.h)) continue;
+        const closestX = Math.max(o.x, Math.min(pos.x, o.x + o.w));
+        const closestY = Math.max(o.y, Math.min(pos.y, o.y + o.h));
+        let dx = pos.x - closestX, dy = pos.y - closestY;
+        let dist = Math.hypot(dx, dy);
+        if (dist === 0) {
+          // Push out toward nearest edge
+          const leftD = pos.x - o.x, rightD = (o.x + o.w) - pos.x;
+          const topD = pos.y - o.y, botD = (o.y + o.h) - pos.y;
+          const m = Math.min(leftD, rightD, topD, botD);
+          if (m === leftD) { pos.x = o.x - r; }
+          else if (m === rightD) { pos.x = o.x + o.w + r; }
+          else if (m === topD) { pos.y = o.y - r; }
+          else { pos.y = o.y + o.h + r; }
+          continue;
+        }
+        const push = r - dist;
+        pos.x += (dx / dist) * push;
+        pos.y += (dy / dist) * push;
+      }
+    };
+    (s as any)._resolveObstacles = resolveCircleAgainstObstacles;
+    (s as any)._bulletHitsObstacle = (bx: number, by: number) => {
+      for (const o of s.obstacles) {
+        if (bx >= o.x && bx <= o.x + o.w && by >= o.y && by <= o.y + o.h) return true;
+      }
+      return false;
+    };
+
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
