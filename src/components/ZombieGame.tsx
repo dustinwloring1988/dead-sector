@@ -675,6 +675,77 @@ export function ZombieGame() {
       ctx.restore();
     }
 
+    function drawObstacles() {
+      for (const o of s.obstacles) {
+        const sx = o.x - s.camera.x, sy = o.y - s.camera.y;
+        if (sx + o.w < -20 || sy + o.h < -20 || sx > canvas.width + 20 || sy > canvas.height + 20) continue;
+        if (o.type === "rock") {
+          ctx.fillStyle = "#3a3a38";
+          ctx.strokeStyle = "#1a1a18";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          const cx = sx + o.w / 2, cy = sy + o.h / 2;
+          const rw = o.w / 2, rh = o.h / 2;
+          ctx.moveTo(cx - rw, cy);
+          ctx.lineTo(cx - rw * 0.6, cy - rh);
+          ctx.lineTo(cx + rw * 0.5, cy - rh * 0.9);
+          ctx.lineTo(cx + rw, cy - rh * 0.2);
+          ctx.lineTo(cx + rw * 0.7, cy + rh);
+          ctx.lineTo(cx - rw * 0.5, cy + rh * 0.9);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#4a4a48";
+          ctx.beginPath();
+          ctx.arc(cx - rw * 0.2, cy - rh * 0.2, Math.min(rw, rh) * 0.3, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (o.type === "crate") {
+          ctx.fillStyle = "#6b4a22";
+          ctx.fillRect(sx, sy, o.w, o.h);
+          ctx.strokeStyle = "#2a1a08";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(sx, sy, o.w, o.h);
+          ctx.beginPath();
+          ctx.moveTo(sx, sy); ctx.lineTo(sx + o.w, sy + o.h);
+          ctx.moveTo(sx + o.w, sy); ctx.lineTo(sx, sy + o.h);
+          ctx.strokeStyle = "#4a2f10";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (o.type === "fence") {
+          // sandbag wall
+          ctx.fillStyle = "#5a4a2a";
+          ctx.strokeStyle = "#2a1f0a";
+          ctx.lineWidth = 1;
+          const bagSize = 18;
+          if (o.w >= o.h) {
+            for (let i = 0; i < Math.floor(o.w / bagSize); i++) {
+              ctx.beginPath();
+              ctx.ellipse(sx + i * bagSize + bagSize / 2, sy + o.h / 2, bagSize / 2 - 1, o.h / 2, 0, 0, Math.PI * 2);
+              ctx.fill(); ctx.stroke();
+            }
+          } else {
+            for (let i = 0; i < Math.floor(o.h / bagSize); i++) {
+              ctx.beginPath();
+              ctx.ellipse(sx + o.w / 2, sy + i * bagSize + bagSize / 2, o.w / 2, bagSize / 2 - 1, 0, 0, Math.PI * 2);
+              ctx.fill(); ctx.stroke();
+            }
+          }
+        } else if (o.type === "barrel") {
+          const cx = sx + o.w / 2, cy = sy + o.h / 2, r = o.w / 2;
+          ctx.fillStyle = "#7a2a1a";
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#2a0a05";
+          ctx.lineWidth = 2; ctx.stroke();
+          ctx.strokeStyle = "#4a1a0a";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
+          ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+          ctx.stroke();
+        }
+      }
+    }
+
     function drawZombies() {
       for (const z of s.zombies) {
         const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
