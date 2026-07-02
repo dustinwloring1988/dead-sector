@@ -1332,16 +1332,29 @@ export function ZombieGame() {
         </div>
       )}
 
-      {/* Game over */}
+      {/* Game over / Victory */}
       {uiState.gameOver && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="text-center font-mono">
-            <h1 className="text-7xl font-bold text-[#c93030] tracking-widest">
-              YOU DIED
-            </h1>
-            <p className="text-[#a89060] mt-4 text-xl">
-              SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
-            </p>
+            {uiState.hp > 0 ? (
+              <>
+                <h1 className="text-7xl font-bold text-[#c9a24a] tracking-widest drop-shadow-[0_4px_10px_rgba(201,162,74,0.5)]">
+                  VICTORY
+                </h1>
+                <p className="text-[#a89060] mt-4 text-xl">
+                  THE HARBINGER HAS FALLEN
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-7xl font-bold text-[#c93030] tracking-widest">
+                  YOU DIED
+                </h1>
+                <p className="text-[#a89060] mt-4 text-xl">
+                  SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
+                </p>
+              </>
+            )}
             <p className="text-[#8a8a6a] mt-1">{uiState.points} TOTAL POINTS</p>
             <button
               onClick={restart}
