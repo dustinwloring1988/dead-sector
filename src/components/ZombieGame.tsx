@@ -1256,11 +1256,13 @@ export function ZombieGame() {
         <>
           <div className="absolute top-4 left-4 font-mono text-[#c9a24a] pointer-events-none">
             <div className="text-3xl font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              ROUND {uiState.round}
+              {uiState.round === 999 ? "BOSS FIGHT" : `ROUND ${uiState.round}`}
             </div>
-            <div className="mt-2 text-sm text-[#a89060]">
-              ZOMBIES: {uiState.zombiesLeft}
-            </div>
+            {uiState.round !== 999 && (
+              <div className="mt-2 text-sm text-[#a89060]">
+                ZOMBIES: {uiState.zombiesLeft}
+              </div>
+            )}
           </div>
 
           <div className="absolute top-4 right-4 font-mono text-right pointer-events-none">
