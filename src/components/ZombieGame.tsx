@@ -427,7 +427,85 @@ export function ZombieGame() {
       if (Math.random() < 0.06) {
         s.pickups.push({ x: z.x, y: z.y, kind: Math.random() < 0.5 ? "ammo" : "health", life: 15 });
       }
+      // easter egg: totem progression
+      for (const t of s.totems) {
+        if (!t.active) continue;
+        const dx = t.x - z.x, dy = t.y - z.y;
+        if (dx * dx + dy * dy < 220 * 220) {
+          t.kills++;
+          if (t.kills >= t.need) {
+            t.active = false;
+            setMessage(`TOTEM ${t.id} AWAKENED`);
+            if (s.totemPhase === 0 && s.totems.every((tt) => !tt.active)) {
+              s.totemPhase = 1;
+              s.totems.push({ x: MAP_W / 2, y: MAP_H / 2, kills: 0, need: 25, active: true, id: "CORE" });
+              setMessage("THE CORE CALLS...", 2600);
+            } else if (s.totemPhase === 1) {
+              s.totemPhase = 2;
+              s.transitionFlash = 1;
+              // insta-kill all zombies
+              for (const zz of s.zombies) {
+                for (let i = 0; i < 20; i++) {
+                  const a = Math.random() * Math.PI * 2;
+                  s.particles.push({ x: zz.x, y: zz.y, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, life: 0.7, maxLife: 0.7, color: "#ffffff", size: 5 });
+                }
+              }
+              s.zombies.length = 0;
+              s.zombiesAlive = 0;
+              s.zombiesToSpawn = -1;
+              setMessage("ASCEND", 2200);
+              setTimeout(() => enterBossMap(), 1600);
+            }
+          }
+          break;
+        }
+      }
       setUiState((u) => ({ ...u, points: s.points, zombiesLeft: s.zombiesToSpawn + s.zombiesAlive }));
+    }
+
+    function enterBossMap() {
+      const cx = MAP_W / 2, cy = MAP_H / 2;
+      s.bossMode = true;
+      s.totemPhase = 3;
+      s.zombies.length = 0;
+      s.bullets.length = 0;
+      s.pickups.length = 0;
+      s.zombiesAlive = 0;
+      s.zombiesToSpawn = -1;
+      // rock-only obstacles scattered around lava arena
+      s.obstacles = [
+        { x: cx - 600, y: cy - 500, w: 110, h: 90, type: "rock" },
+        { x: cx + 500, y: cy - 560, w: 100, h: 80, type: "rock" },
+        { x: cx - 700, y: cy + 300, w: 130, h: 100, type: "rock" },
+        { x: cx + 620, y: cy + 420, w: 120, h: 110, type: "rock" },
+        { x: cx - 300, y: cy - 700, w: 90, h: 80, type: "rock" },
+        { x: cx + 250, y: cy + 660, w: 100, h: 90, type: "rock" },
+        { x: cx - 400, y: cy + 200, w: 80, h: 70, type: "rock" },
+        { x: cx + 380, y: cy - 220, w: 85, h: 75, type: "rock" },
+        { x: cx - 100, y: cy - 400, w: 70, h: 60, type: "rock" },
+        { x: cx + 120, y: cy + 380, w: 90, h: 75, type: "rock" },
+      ];
+      // lava pools
+      s.lava = [
+        { x: cx - 260, y: cy - 100, w: 180, h: 90 },
+        { x: cx + 80, y: cy - 60, w: 200, h: 110 },
+        { x: cx - 120, y: cy + 140, w: 240, h: 100 },
+        { x: cx - 550, y: cy + 40, w: 140, h: 200 },
+        { x: cx + 410, y: cy + 120, w: 160, h: 180 },
+        { x: cx - 40, y: cy - 340, w: 220, h: 90 },
+      ];
+      s.totems = [];
+      s.player.x = cx;
+      s.player.y = cy + 500;
+      s.player.hp = Math.min(s.player.maxHp, s.player.hp + 40);
+      // boss
+      s.boss = {
+        x: cx, y: cy - 500,
+        hp: 4000, maxHp: 4000, speed: 70, radius: 42,
+        lastShot: performance.now() + 3000,
+      };
+      setMessage("BOSS: THE HARBINGER", 3000);
+      setUiState((u) => ({ ...u, round: 999, zombiesLeft: 1, hp: s.player.hp }));
     }
 
     function update(dt: number) {
