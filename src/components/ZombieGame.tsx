@@ -205,13 +205,15 @@ export function ZombieGame() {
       s.mouse.y = e.clientY - rect.top;
     };
     const md = () => {
-      s.mouse.down = true;
       if (!s.started) {
         s.started = true;
+        s.mouse.down = false; // don't fire on the click that starts the game
         setUiState((u) => ({ ...u, started: true }));
         setShowHelp(false);
         startRound(1);
+        return;
       }
+      s.mouse.down = true;
     };
     const mu = () => (s.mouse.down = false);
 
@@ -219,7 +221,9 @@ export function ZombieGame() {
     window.addEventListener("keyup", ku);
     canvas.addEventListener("mousemove", mm);
     canvas.addEventListener("mousedown", md);
-    canvas.addEventListener("mouseup", mu);
+    // bind mouseup + blur to window so releasing outside canvas still stops firing
+    window.addEventListener("mouseup", mu);
+    window.addEventListener("blur", mu);
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     function setMessage(m: string, ms = 1800) {
@@ -481,9 +485,33 @@ export function ZombieGame() {
       for (const z of s.zombies) {
         const dx = s.player.x - z.x, dy = s.player.y - z.y;
         const d = Math.hypot(dx, dy) || 1;
-        z.x += (dx / d) * z.speed * dt;
+        let dirX = dx / d, dirY = dy / d;
+
+        // Steer around obstacles: if the look-ahead position collides,
+        // rotate the desired direction to the side of the blocker that
+        // is closer to the player (obstacle avoidance).
+        const look = z.radius + 34;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          let blocker: typeof s.obstacles[number] | null = null;
+          const tx = z.x + dirX * look, ty = z.y + dirY * look;
+          for (const o of s.obstacles) {
+            if (circleRectOverlap(tx, ty, z.radius + 2, o.x, o.y, o.w, o.h)) { blocker = o; break; }
+          }
+          if (!blocker) break;
+          // Choose rotation side: cross product of dir with vector to obstacle center
+          const ocx = blocker.x + blocker.w / 2, ocy = blocker.y + blocker.h / 2;
+          const cross = dirX * (ocy - z.y) - dirY * (ocx - z.x);
+          const sign = cross > 0 ? -1 : 1;
+          const ang = sign * (Math.PI / 3); // 60° sidestep per attempt
+          const cs = Math.cos(ang), sn = Math.sin(ang);
+          const nx = dirX * cs - dirY * sn;
+          const ny = dirX * sn + dirY * cs;
+          dirX = nx; dirY = ny;
+        }
+
+        z.x += dirX * z.speed * dt;
         (s as any)._resolveObstacles(z, z.radius);
-        z.y += (dy / d) * z.speed * dt;
+        z.y += dirY * z.speed * dt;
         (s as any)._resolveObstacles(z, z.radius);
         if (d < z.radius + s.player.r) {
           damagePlayer(z.type === "brute" ? 25 : z.type === "runner" ? 12 : 15);
@@ -860,6 +888,8 @@ export function ZombieGame() {
       window.removeEventListener("resize", resize);
       window.removeEventListener("keydown", kd);
       window.removeEventListener("keyup", ku);
+      window.removeEventListener("mouseup", mu);
+      window.removeEventListener("blur", mu);
     };
   }, []);
 
