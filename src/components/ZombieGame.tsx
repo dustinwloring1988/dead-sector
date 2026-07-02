@@ -37,6 +37,7 @@ const MAP_H = 2000;
 
 export function ZombieGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const startGameRef = useRef<() => void>(() => {});
   const [uiState, setUiState] = useState({
     hp: 100,
     points: 500,
@@ -206,11 +207,7 @@ export function ZombieGame() {
     };
     const md = () => {
       if (!s.started) {
-        s.started = true;
-        s.mouse.down = false; // don't fire on the click that starts the game
-        setUiState((u) => ({ ...u, started: true }));
-        setShowHelp(false);
-        startRound(1);
+        beginGame();
         return;
       }
       s.mouse.down = true;
@@ -240,6 +237,18 @@ export function ZombieGame() {
       setMessage(`ROUND ${r}`, 2200);
       setUiState((u) => ({ ...u, round: r, zombiesLeft: count }));
     }
+
+    function beginGame() {
+      if (s.started) return;
+      s.started = true;
+      s.mouse.down = false;
+      s.lastShot = performance.now();
+      setUiState((u) => ({ ...u, started: true }));
+      setShowHelp(false);
+      startRound(1);
+    }
+
+    startGameRef.current = beginGame;
 
     function tryReload() {
       const key = s.currentWeaponKey;
@@ -970,17 +979,7 @@ export function ZombieGame() {
             )}
             <button
               onClick={() => {
-                stateRef.current.started = true;
-                setUiState((u) => ({ ...u, started: true }));
-                setShowHelp(false);
-                // trigger round 1
-                const s = stateRef.current;
-                s.round = 0;
-                // fake mouse down to trigger start already handled; call startRound directly:
-                setTimeout(() => {
-                  const evt = new MouseEvent("mousedown");
-                  canvasRef.current?.dispatchEvent(evt);
-                }, 10);
+                startGameRef.current();
               }}
               className="mt-10 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
             >
