@@ -156,6 +156,16 @@ export function ZombieGame() {
       s.obstacles = rects;
     }
 
+    if (s.totems.length === 0) {
+      const cx = MAP_W / 2, cy = MAP_H / 2;
+      s.totems = [
+        { x: cx - 720, y: cy - 720, kills: 0, need: 20, active: true, id: "NW" },
+        { x: cx + 720, y: cy - 720, kills: 0, need: 20, active: true, id: "NE" },
+        { x: cx - 720, y: cy + 720, kills: 0, need: 20, active: true, id: "SW" },
+        { x: cx + 720, y: cy + 720, kills: 0, need: 20, active: true, id: "SE" },
+      ];
+    }
+
     // Collision helpers
     const circleRectOverlap = (cx: number, cy: number, r: number, rx: number, ry: number, rw: number, rh: number) => {
       const closestX = Math.max(rx, Math.min(cx, rx + rw));
