@@ -104,6 +104,12 @@ export function ZombieGame() {
     round0Started: false,
     startTime: 0,
     endTime: 0,
+    decals: [] as { x: number; y: number; r: number; color: string; alpha: number; kind: "blood" | "scorch" }[],
+    dirtPatches: [] as { x: number; y: number; r: number; c: string }[],
+    grassTufts: [] as { x: number; y: number; c: string }[],
+    groundInit: false,
+    walkPhase: 0,
+    muzzleFlash: 0,
   });
 
   useEffect(() => {
@@ -157,6 +163,28 @@ export function ZombieGame() {
         { x: cx + 770, y: cy + 780, w: 55, h: 55, type: "crate" },
       ];
       s.obstacles = rects;
+    }
+
+    if (!s.groundInit) {
+      s.groundInit = true;
+      const rnd = (seed: number) => {
+        let x = Math.sin(seed) * 10000; return x - Math.floor(x);
+      };
+      for (let i = 0; i < 140; i++) {
+        s.dirtPatches.push({
+          x: rnd(i + 1) * MAP_W,
+          y: rnd(i + 999) * MAP_H,
+          r: 40 + rnd(i + 500) * 120,
+          c: rnd(i + 77) < 0.5 ? "#111611" : "#0d120d",
+        });
+      }
+      for (let i = 0; i < 300; i++) {
+        s.grassTufts.push({
+          x: rnd(i + 2000) * MAP_W,
+          y: rnd(i + 3000) * MAP_H,
+          c: rnd(i + 4000) < 0.5 ? "#1a2515" : "#22301a",
+        });
+      }
     }
 
     if (s.totems.length === 0) {
@@ -396,6 +424,16 @@ export function ZombieGame() {
         });
       }
       s.camera.shake = Math.min(s.camera.shake + 3, 12);
+      s.muzzleFlash = 1;
+      // eject shell casing
+      const perpA = baseAngle + Math.PI / 2;
+      s.particles.push({
+        x: s.player.x + Math.cos(baseAngle) * 6,
+        y: s.player.y + Math.sin(baseAngle) * 6,
+        vx: Math.cos(perpA) * 90 + (Math.random() - 0.5) * 40,
+        vy: Math.sin(perpA) * 90 + (Math.random() - 0.5) * 40,
+        life: 0.6, maxLife: 0.6, color: "#d4b060", size: 2,
+      });
       syncWeaponUi();
     }
 
@@ -418,6 +456,9 @@ export function ZombieGame() {
       s.zombiesAlive--;
       const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : 60) + (headshot ? 30 : 0);
       s.points += pts;
+      // blood decal
+      s.decals.push({ x: z.x, y: z.y, r: z.radius * (1.4 + Math.random() * 0.6), color: "#4a0808", alpha: 0.55, kind: "blood" });
+      if (s.decals.length > 120) s.decals.shift();
       // particles
       for (let i = 0; i < 18; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -817,10 +858,31 @@ export function ZombieGame() {
         if (s.camera.shake < 0.1) s.camera.shake = 0;
       }
       s.hitFlash *= 0.9;
+      s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
+      // walk bob when moving
+      const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
+        s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
+      if (isMoving) s.walkPhase += dt * 12;
     }
 
     function drawGrid() {
-      ctx.strokeStyle = "#1a1f1a";
+      // dirt patches (parallax-free, world-anchored)
+      if (!s.bossMode) {
+        const vx0 = s.camera.x, vy0 = s.camera.y, vx1 = vx0 + canvas.width, vy1 = vy0 + canvas.height;
+        for (const p of s.dirtPatches) {
+          if (p.x + p.r < vx0 || p.y + p.r < vy0 || p.x - p.r > vx1 || p.y - p.r > vy1) continue;
+          ctx.fillStyle = p.c;
+          ctx.beginPath();
+          ctx.arc(p.x - s.camera.x, p.y - s.camera.y, p.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (const g of s.grassTufts) {
+          if (g.x < vx0 - 4 || g.y < vy0 - 4 || g.x > vx1 + 4 || g.y > vy1 + 4) continue;
+          ctx.fillStyle = g.c;
+          ctx.fillRect(g.x - s.camera.x, g.y - s.camera.y, 3, 3);
+        }
+      }
+      ctx.strokeStyle = s.bossMode ? "#2a0808" : "#1a1f1a";
       ctx.lineWidth = 1;
       const step = 100;
       const startX = Math.floor(s.camera.x / step) * step;
@@ -837,6 +899,27 @@ export function ZombieGame() {
         ctx.lineTo(canvas.width, y - s.camera.y);
         ctx.stroke();
       }
+    }
+
+    function drawDecals() {
+      for (const d of s.decals) {
+        const sx = d.x - s.camera.x, sy = d.y - s.camera.y;
+        if (sx + d.r < 0 || sy + d.r < 0 || sx - d.r > canvas.width || sy - d.r > canvas.height) continue;
+        ctx.globalAlpha = d.alpha;
+        ctx.fillStyle = d.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, d.r * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        // splatter dots
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2 + d.r;
+          const rr = d.r * (0.7 + ((i * 37) % 10) / 30);
+          ctx.beginPath();
+          ctx.arc(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr, 3 + (i % 2), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
     }
 
     function drawMapBounds() {
@@ -907,12 +990,44 @@ export function ZombieGame() {
 
     function drawPlayer() {
       const sx = s.player.x - s.camera.x, sy = s.player.y - s.camera.y;
+      const bob = Math.sin(s.walkPhase) * 1.5;
+      // shadow
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      ctx.beginPath();
+      ctx.ellipse(sx + 3, sy + 6, s.player.r + 2, (s.player.r + 2) * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // aim laser
+      const laserLen = 260;
+      const grd = ctx.createLinearGradient(sx, sy, sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
+      grd.addColorStop(0, "rgba(255,80,60,0.55)");
+      grd.addColorStop(1, "rgba(255,80,60,0)");
+      ctx.strokeStyle = grd;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx + Math.cos(s.player.angle) * 22, sy + Math.sin(s.player.angle) * 22);
+      ctx.lineTo(sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
+      ctx.stroke();
+
       ctx.save();
-      ctx.translate(sx, sy);
+      ctx.translate(sx, sy + bob);
       ctx.rotate(s.player.angle);
+      // muzzle flash glow
+      if (s.muzzleFlash > 0.05) {
+        const mf = s.muzzleFlash;
+        const g2 = ctx.createRadialGradient(30, 0, 0, 30, 0, 26);
+        g2.addColorStop(0, `rgba(255,230,140,${0.9 * mf})`);
+        g2.addColorStop(0.4, `rgba(255,150,50,${0.5 * mf})`);
+        g2.addColorStop(1, "rgba(255,120,20,0)");
+        ctx.fillStyle = g2;
+        ctx.beginPath();
+        ctx.arc(30, 0, 26, 0, Math.PI * 2);
+        ctx.fill();
+      }
       // gun
       ctx.fillStyle = "#333";
       ctx.fillRect(8, -3, 22, 6);
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(28, -2, 4, 4);
       // body
       ctx.fillStyle = "#4a5a3a";
       ctx.beginPath();
@@ -921,10 +1036,19 @@ export function ZombieGame() {
       ctx.strokeStyle = "#2a3a1a";
       ctx.lineWidth = 2;
       ctx.stroke();
+      // shoulder highlight
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.beginPath();
+      ctx.arc(-3, -4, s.player.r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
       // helmet
       ctx.fillStyle = "#2a2a2a";
       ctx.beginPath();
       ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.15)";
+      ctx.beginPath();
+      ctx.arc(-2, -3, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -1001,26 +1125,46 @@ export function ZombieGame() {
     }
 
     function drawZombies() {
+      const now = performance.now() / 1000;
       for (const z of s.zombies) {
         const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
         if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+        // shadow
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.beginPath();
+        ctx.ellipse(sx + 3, sy + z.radius * 0.5, z.radius + 2, (z.radius + 2) * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        const bob = Math.sin(now * 5 + (z.x + z.y) * 0.01) * 1.5;
+        const cy = sy + bob;
         const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(sx, sy, z.radius, 0, Math.PI * 2);
+        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+        ctx.fill();
+        // torn flesh highlight
+        ctx.fillStyle = "rgba(120,20,20,0.35)";
+        ctx.beginPath();
+        ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "#7a0d0d";
         ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
         ctx.stroke();
-        // eyes
-        ctx.fillStyle = "#ff3030";
+        // eye glow
         const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
         const ex = Math.cos(ang) * (z.radius * 0.4);
         const ey = Math.sin(ang) * (z.radius * 0.4);
         const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+        const glow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+        glow.addColorStop(0, "rgba(255,60,60,0.6)");
+        glow.addColorStop(1, "rgba(255,60,60,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#ff3030";
         ctx.beginPath();
-        ctx.arc(sx + ex + perpX, sy + ey + perpY, 2, 0, Math.PI * 2);
-        ctx.arc(sx + ex - perpX, sy + ey - perpY, 2, 0, Math.PI * 2);
+        ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
+        ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
         ctx.fill();
         // hp bar
         if (z.hp < z.maxHp) {
@@ -1033,11 +1177,29 @@ export function ZombieGame() {
     }
 
     function drawBullets() {
-      ctx.fillStyle = "#ffdd66";
       for (const b of s.bullets) {
         const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
+        // tracer trail
+        const tlen = 14;
+        const speed = Math.hypot(b.vx, b.vy) || 1;
+        const tx = sx - (b.vx / speed) * tlen;
+        const ty = sy - (b.vy / speed) * tlen;
+        const grad = ctx.createLinearGradient(tx, ty, sx, sy);
+        grad.addColorStop(0, "rgba(255,220,80,0)");
+        grad.addColorStop(1, "rgba(255,240,160,0.95)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+        // glow head
+        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, 6);
+        g.addColorStop(0, "rgba(255,240,160,1)");
+        g.addColorStop(1, "rgba(255,180,50,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 6, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -1224,6 +1386,7 @@ export function ZombieGame() {
       ctx.fillStyle = s.bossMode ? "#1a0505" : "#0a0d0a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drawGrid();
+      drawDecals();
       drawMapBounds();
       if (s.bossMode) drawLava();
       if (!s.bossMode) drawBuyStations();
