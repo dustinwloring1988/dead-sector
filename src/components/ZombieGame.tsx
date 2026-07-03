@@ -265,7 +265,9 @@ export function ZombieGame() {
       s.started = true;
       s.mouse.down = false;
       s.lastShot = performance.now();
-      setUiState((u) => ({ ...u, started: true }));
+      s.startTime = performance.now();
+      s.endTime = 0;
+      setUiState((u) => ({ ...u, started: true, elapsedMs: 0 }));
       setShowHelp(false);
       startRound(1);
     }
