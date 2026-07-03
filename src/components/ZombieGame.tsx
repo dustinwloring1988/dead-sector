@@ -1386,6 +1386,7 @@ export function ZombieGame() {
       ctx.fillStyle = s.bossMode ? "#1a0505" : "#0a0d0a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drawGrid();
+      drawDecals();
       drawMapBounds();
       if (s.bossMode) drawLava();
       if (!s.bossMode) drawBuyStations();
