@@ -50,6 +50,7 @@ export function ZombieGame() {
     gameOver: false,
     started: false,
     message: "",
+    elapsedMs: 0,
   });
   const [showHelp, setShowHelp] = useState(true);
 
