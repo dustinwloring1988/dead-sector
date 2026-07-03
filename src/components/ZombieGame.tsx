@@ -1125,26 +1125,46 @@ export function ZombieGame() {
     }
 
     function drawZombies() {
+      const now = performance.now() / 1000;
       for (const z of s.zombies) {
         const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
         if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+        // shadow
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.beginPath();
+        ctx.ellipse(sx + 3, sy + z.radius * 0.5, z.radius + 2, (z.radius + 2) * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        const bob = Math.sin(now * 5 + (z.x + z.y) * 0.01) * 1.5;
+        const cy = sy + bob;
         const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(sx, sy, z.radius, 0, Math.PI * 2);
+        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+        ctx.fill();
+        // torn flesh highlight
+        ctx.fillStyle = "rgba(120,20,20,0.35)";
+        ctx.beginPath();
+        ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "#7a0d0d";
         ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
         ctx.stroke();
-        // eyes
-        ctx.fillStyle = "#ff3030";
+        // eye glow
         const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
         const ex = Math.cos(ang) * (z.radius * 0.4);
         const ey = Math.sin(ang) * (z.radius * 0.4);
         const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+        const glow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+        glow.addColorStop(0, "rgba(255,60,60,0.6)");
+        glow.addColorStop(1, "rgba(255,60,60,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#ff3030";
         ctx.beginPath();
-        ctx.arc(sx + ex + perpX, sy + ey + perpY, 2, 0, Math.PI * 2);
-        ctx.arc(sx + ex - perpX, sy + ey - perpY, 2, 0, Math.PI * 2);
+        ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
+        ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
         ctx.fill();
         // hp bar
         if (z.hp < z.maxHp) {
@@ -1157,11 +1177,29 @@ export function ZombieGame() {
     }
 
     function drawBullets() {
-      ctx.fillStyle = "#ffdd66";
       for (const b of s.bullets) {
         const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
+        // tracer trail
+        const tlen = 14;
+        const speed = Math.hypot(b.vx, b.vy) || 1;
+        const tx = sx - (b.vx / speed) * tlen;
+        const ty = sy - (b.vy / speed) * tlen;
+        const grad = ctx.createLinearGradient(tx, ty, sx, sy);
+        grad.addColorStop(0, "rgba(255,220,80,0)");
+        grad.addColorStop(1, "rgba(255,240,160,0.95)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+        // glow head
+        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, 6);
+        g.addColorStop(0, "rgba(255,240,160,1)");
+        g.addColorStop(1, "rgba(255,180,50,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 6, 0, Math.PI * 2);
         ctx.fill();
       }
     }
