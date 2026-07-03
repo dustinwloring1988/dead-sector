@@ -990,12 +990,44 @@ export function ZombieGame() {
 
     function drawPlayer() {
       const sx = s.player.x - s.camera.x, sy = s.player.y - s.camera.y;
+      const bob = Math.sin(s.walkPhase) * 1.5;
+      // shadow
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      ctx.beginPath();
+      ctx.ellipse(sx + 3, sy + 6, s.player.r + 2, (s.player.r + 2) * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // aim laser
+      const laserLen = 260;
+      const grd = ctx.createLinearGradient(sx, sy, sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
+      grd.addColorStop(0, "rgba(255,80,60,0.55)");
+      grd.addColorStop(1, "rgba(255,80,60,0)");
+      ctx.strokeStyle = grd;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx + Math.cos(s.player.angle) * 22, sy + Math.sin(s.player.angle) * 22);
+      ctx.lineTo(sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
+      ctx.stroke();
+
       ctx.save();
-      ctx.translate(sx, sy);
+      ctx.translate(sx, sy + bob);
       ctx.rotate(s.player.angle);
+      // muzzle flash glow
+      if (s.muzzleFlash > 0.05) {
+        const mf = s.muzzleFlash;
+        const g2 = ctx.createRadialGradient(30, 0, 0, 30, 0, 26);
+        g2.addColorStop(0, `rgba(255,230,140,${0.9 * mf})`);
+        g2.addColorStop(0.4, `rgba(255,150,50,${0.5 * mf})`);
+        g2.addColorStop(1, "rgba(255,120,20,0)");
+        ctx.fillStyle = g2;
+        ctx.beginPath();
+        ctx.arc(30, 0, 26, 0, Math.PI * 2);
+        ctx.fill();
+      }
       // gun
       ctx.fillStyle = "#333";
       ctx.fillRect(8, -3, 22, 6);
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(28, -2, 4, 4);
       // body
       ctx.fillStyle = "#4a5a3a";
       ctx.beginPath();
@@ -1004,10 +1036,19 @@ export function ZombieGame() {
       ctx.strokeStyle = "#2a3a1a";
       ctx.lineWidth = 2;
       ctx.stroke();
+      // shoulder highlight
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.beginPath();
+      ctx.arc(-3, -4, s.player.r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
       // helmet
       ctx.fillStyle = "#2a2a2a";
       ctx.beginPath();
       ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.15)";
+      ctx.beginPath();
+      ctx.arc(-2, -3, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
