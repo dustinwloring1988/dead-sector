@@ -858,6 +858,11 @@ export function ZombieGame() {
         if (s.camera.shake < 0.1) s.camera.shake = 0;
       }
       s.hitFlash *= 0.9;
+      s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
+      // walk bob when moving
+      const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
+        s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
+      if (isMoving) s.walkPhase += dt * 12;
     }
 
     function drawGrid() {
