@@ -165,6 +165,28 @@ export function ZombieGame() {
       s.obstacles = rects;
     }
 
+    if (!s.groundInit) {
+      s.groundInit = true;
+      const rnd = (seed: number) => {
+        let x = Math.sin(seed) * 10000; return x - Math.floor(x);
+      };
+      for (let i = 0; i < 140; i++) {
+        s.dirtPatches.push({
+          x: rnd(i + 1) * MAP_W,
+          y: rnd(i + 999) * MAP_H,
+          r: 40 + rnd(i + 500) * 120,
+          c: rnd(i + 77) < 0.5 ? "#111611" : "#0d120d",
+        });
+      }
+      for (let i = 0; i < 300; i++) {
+        s.grassTufts.push({
+          x: rnd(i + 2000) * MAP_W,
+          y: rnd(i + 3000) * MAP_H,
+          c: rnd(i + 4000) < 0.5 ? "#1a2515" : "#22301a",
+        });
+      }
+    }
+
     if (s.totems.length === 0) {
       const cx = MAP_W / 2, cy = MAP_H / 2;
       s.totems = [
