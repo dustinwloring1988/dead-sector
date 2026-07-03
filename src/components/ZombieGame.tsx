@@ -465,7 +465,7 @@ export function ZombieGame() {
           break;
         }
       }
-      setUiState((u) => ({ ...u, points: s.points, zombiesLeft: s.zombiesToSpawn + s.zombiesAlive }));
+      setUiState((u) => ({ ...u, points: s.points, zombiesLeft: Math.max(0, s.zombiesToSpawn) + s.zombiesAlive }));
     }
 
     function enterBossMap() {
