@@ -104,6 +104,12 @@ export function ZombieGame() {
     round0Started: false,
     startTime: 0,
     endTime: 0,
+    decals: [] as { x: number; y: number; r: number; color: string; alpha: number; kind: "blood" | "scorch" }[],
+    dirtPatches: [] as { x: number; y: number; r: number; c: string }[],
+    grassTufts: [] as { x: number; y: number; c: string }[],
+    groundInit: false,
+    walkPhase: 0,
+    muzzleFlash: 0,
   });
 
   useEffect(() => {
