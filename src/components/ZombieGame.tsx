@@ -703,10 +703,15 @@ export function ZombieGame() {
           const bdx = bs.x - b.x, bdy = bs.y - b.y;
           if (bdx * bdx + bdy * bdy < bs.radius * bs.radius) {
             bs.hp -= b.dmg;
+            (bs as any).hitFlash = 1;
+            (bs as any).hitShake = Math.min(12, ((bs as any).hitShake || 0) + 6);
+            s.camera.shake = Math.max(s.camera.shake, 4);
             s.bullets.splice(i, 1);
-            for (let k = 0; k < 5; k++) {
-              const aa = Math.random() * Math.PI * 2;
-              s.particles.push({ x: b.x, y: b.y, vx: Math.cos(aa) * 80, vy: Math.sin(aa) * 80, life: 0.3, maxLife: 0.3, color: "#f60", size: 3 });
+            const impactAng = Math.atan2(b.y - bs.y, b.x - bs.x);
+            for (let k = 0; k < 10; k++) {
+              const aa = impactAng + (Math.random() - 0.5) * 1.4;
+              const sp = 140 + Math.random() * 120;
+              s.particles.push({ x: b.x, y: b.y, vx: Math.cos(aa) * sp, vy: Math.sin(aa) * sp, life: 0.45, maxLife: 0.45, color: Math.random() < 0.5 ? "#ffdd66" : "#ff5522", size: 3 + Math.random() * 2 });
             }
           }
         }
