@@ -483,6 +483,7 @@ export function ZombieGame() {
     elapsedMs: 0,
   });
   const [showHelp, setShowHelp] = useState(true);
+  const isMobile = useIsMobile();
 
   const stateRef = useRef({
     player: { x: MAP_W / 2, y: MAP_H / 2, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
