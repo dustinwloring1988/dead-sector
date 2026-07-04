@@ -10,6 +10,8 @@ type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
 type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
+type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall"; hp?: number };
+type CaveGenerator = Vec & { active: boolean; progressMs: number };
 
 type Weapon = {
   name: string;
@@ -36,6 +38,13 @@ const WEAPONS: Record<string, Weapon> = {
 const MAP_W = 2000;
 const MAP_H = 2000;
 const BOSS_ARENA_SIZE = 1000;
+const CAVE_RECT = { x: 620, y: 1425, w: 760, h: 535 };
+const CAVE_ENTRY = { x: 900, w: 200 };
+const GENERATOR_POS = { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 120 };
+const GENERATOR_INTERACT_DISTANCE = 80;
+const GENERATOR_HOLD_MS = 20000;
+const FLASHLIGHT_CONE_ANGLE = Math.PI / 3;
+const FLASHLIGHT_LENGTH = 430;
 
 // ─── 8-bit Sound Engine (Web Audio API, no files) ───────────────────────────
 type MusicMode = "menu" | "main" | "boss" | null;
@@ -530,7 +539,7 @@ export function ZombieGame() {
       { x: MAP_W / 2, y: MAP_H / 2 - 500 },
       { x: MAP_W / 2, y: MAP_H / 2 + 500 },
     ],
-    obstacles: [] as { x: number; y: number; w: number; h: number; type: "rock" | "crate" | "fence" | "barrel"; hp?: number }[],
+    obstacles: [] as Obstacle[],
     totems: [] as { x: number; y: number; kills: number; need: number; active: boolean; id: string }[],
     totemPhase: 0 as 0 | 1 | 2 | 3, // 0=corners, 1=center, 2=transitioning, 3=boss
     transitionFlash: 0,
@@ -554,6 +563,14 @@ export function ZombieGame() {
     groundInit: false,
     walkPhase: 0,
     muzzleFlash: 0,
+    flashlightOn: true,
+    generator: {
+      x: GENERATOR_POS.x,
+      y: GENERATOR_POS.y,
+      active: false,
+      progressMs: 0,
+    } as CaveGenerator,
+    generatorHintShown: false,
   });
 
   useEffect(() => {
@@ -605,6 +622,12 @@ export function ZombieGame() {
         { x: cx + 820, y: cy - 780, w: 60, h: 60, type: "crate" },
         { x: cx - 780, y: cy - 800, w: 55, h: 55, type: "crate" },
         { x: cx + 770, y: cy + 780, w: 55, h: 55, type: "crate" },
+        // cave entrance and chamber at the bottom of the map
+        { x: CAVE_RECT.x + 40, y: CAVE_RECT.y, w: CAVE_ENTRY.x - CAVE_RECT.x - 40, h: 32, type: "caveWall" },
+        { x: CAVE_ENTRY.x + CAVE_ENTRY.w, y: CAVE_RECT.y, w: CAVE_RECT.x + CAVE_RECT.w - (CAVE_ENTRY.x + CAVE_ENTRY.w) - 40, h: 32, type: "caveWall" },
+        { x: CAVE_RECT.x, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
+        { x: CAVE_RECT.x + CAVE_RECT.w - 40, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
+        { x: CAVE_RECT.x, y: CAVE_RECT.y + CAVE_RECT.h - 40, w: CAVE_RECT.w, h: 40, type: "caveWall" },
       ];
       s.obstacles = rects;
     }
@@ -686,6 +709,219 @@ export function ZombieGame() {
       return -1;
     };
 
+    const isInCave = (x: number, y: number) =>
+      x >= CAVE_RECT.x && x <= CAVE_RECT.x + CAVE_RECT.w && y >= CAVE_RECT.y && y <= CAVE_RECT.y + CAVE_RECT.h;
+
+    const caveLights = [
+      { x: CAVE_RECT.x + 120, y: CAVE_RECT.y + 70 },
+      { x: CAVE_RECT.x + CAVE_RECT.w - 120, y: CAVE_RECT.y + 70 },
+      { x: CAVE_RECT.x + 120, y: CAVE_RECT.y + CAVE_RECT.h - 78 },
+      { x: CAVE_RECT.x + CAVE_RECT.w - 120, y: CAVE_RECT.y + CAVE_RECT.h - 78 },
+      { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + 90 },
+    ];
+
+    function drawCaveArea() {
+      const sx = CAVE_RECT.x - s.camera.x;
+      const sy = CAVE_RECT.y - s.camera.y;
+      if (sx > canvas.width || sy > canvas.height || sx + CAVE_RECT.w < 0 || sy + CAVE_RECT.h < 0) return;
+
+      const playerInCave = isInCave(s.player.x, s.player.y);
+      const cavePower = !!s.generator?.active;
+      const base = ctx.createLinearGradient(sx, sy, sx, sy + CAVE_RECT.h);
+      base.addColorStop(0, playerInCave ? (cavePower ? "#1d1814" : "#090705") : "#020202");
+      base.addColorStop(0.45, playerInCave ? (cavePower ? "#15100d" : "#050403") : "#010101");
+      base.addColorStop(1, playerInCave ? (cavePower ? "#221b15" : "#030202") : "#000000");
+      ctx.fillStyle = base;
+      ctx.fillRect(sx, sy, CAVE_RECT.w, CAVE_RECT.h);
+
+      if (!playerInCave) {
+        // Hide the cave interior from outside the entrance.
+        ctx.fillStyle = "rgba(0,0,0,0.95)";
+        ctx.fillRect(sx + 16, sy + 24, CAVE_RECT.w - 32, CAVE_RECT.h - 24);
+        ctx.fillStyle = "rgba(20,16,12,0.95)";
+        ctx.fillRect(sx, sy, CAVE_RECT.w, 42);
+        ctx.fillRect(sx + 16, sy + 42, CAVE_RECT.w - 32, 20);
+      }
+
+      // rugged cave floor texture
+      const specks = cavePower
+        ? [
+            [80, 80, 90], [180, 150, 70], [290, 310, 110], [480, 260, 80], [620, 120, 95],
+            [120, 410, 120], [360, 460, 95], [560, 380, 120], [700, 470, 70],
+          ]
+        : [
+            [70, 70, 110], [170, 160, 90], [300, 330, 130], [500, 240, 120], [660, 140, 130],
+            [130, 420, 140], [380, 460, 115], [560, 380, 120], [700, 470, 90],
+          ];
+      if (playerInCave) {
+        for (const [ox, oy, r] of specks) {
+          ctx.fillStyle = cavePower ? "rgba(120,90,60,0.08)" : "rgba(80,60,40,0.12)";
+          ctx.beginPath();
+          ctx.arc(sx + ox, sy + oy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // tunnel mouth and floor lip
+      const entryX = CAVE_ENTRY.x - s.camera.x;
+      ctx.fillStyle = playerInCave ? (cavePower ? "rgba(55,40,25,0.4)" : "rgba(25,18,12,0.65)") : "rgba(0,0,0,0.98)";
+      ctx.fillRect(entryX, sy, CAVE_ENTRY.w, 42);
+      ctx.fillStyle = playerInCave ? (cavePower ? "rgba(255,220,150,0.06)" : "rgba(255,220,150,0.03)") : "rgba(0,0,0,0)";
+      ctx.fillRect(entryX, sy + 38, CAVE_ENTRY.w, 6);
+
+      // stalactite teeth at the cave mouth
+      ctx.fillStyle = playerInCave ? (cavePower ? "rgba(35,25,18,0.75)" : "rgba(10,8,6,0.9)") : "rgba(0,0,0,1)";
+      for (let i = 0; i < 9; i++) {
+        const tx = entryX - 20 + i * 26;
+        const height = 18 + ((i % 3) * 10);
+        ctx.beginPath();
+        ctx.moveTo(tx, sy);
+        ctx.lineTo(tx + 13, sy + height);
+        ctx.lineTo(tx + 26, sy);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // lamp posts and glow after power is restored
+      if (playerInCave && cavePower) {
+        for (const light of caveLights) {
+          const lx = light.x - s.camera.x;
+          const ly = light.y - s.camera.y;
+          const pulse = 0.7 + Math.sin(performance.now() / 260 + light.x * 0.01) * 0.3;
+          const glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, 140);
+          glow.addColorStop(0, `rgba(255,236,180,${0.35 * pulse})`);
+          glow.addColorStop(0.5, `rgba(255,182,70,${0.18 * pulse})`);
+          glow.addColorStop(1, "rgba(255,182,70,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(lx, ly, 140, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#3c2f1f";
+          ctx.fillRect(lx - 3, ly - 12, 6, 24);
+          ctx.fillStyle = "#ffd98a";
+          ctx.beginPath();
+          ctx.arc(lx, ly - 14, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawGenerator() {
+      const gen = s.generator;
+      if (!gen) return;
+
+      const sx = gen.x - s.camera.x;
+      const sy = gen.y - s.camera.y;
+      if (sx < -120 || sy < -120 || sx > canvas.width + 120 || sy > canvas.height + 120) return;
+
+      const dist = Math.hypot(s.player.x - gen.x, s.player.y - gen.y);
+      const progress = gen.active ? 1 : Math.min(1, gen.progressMs / GENERATOR_HOLD_MS);
+      const pulse = 0.65 + Math.sin(performance.now() / 180) * 0.35;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      if (!gen.active && dist < 140) {
+        ctx.shadowBlur = 18 * pulse;
+        ctx.shadowColor = "#ff9a3a";
+        ctx.fillStyle = `rgba(255, 140, 40, ${0.12 * pulse})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, 80, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      ctx.fillStyle = gen.active ? "#234b2b" : "#26231f";
+      ctx.fillRect(-28, -18, 56, 36);
+      ctx.strokeStyle = gen.active ? "#67d77b" : "#6d6258";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-28, -18, 56, 36);
+      ctx.fillStyle = gen.active ? "#67d77b" : "#ff6b2d";
+      ctx.beginPath();
+      ctx.arc(18, -8, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#1d1712";
+      ctx.fillRect(-10, -32, 20, 14);
+      ctx.strokeStyle = "#0d0907";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-10, -32, 20, 14);
+
+      ctx.fillStyle = "#5d4f42";
+      ctx.fillRect(-14, 18, 28, 24);
+      ctx.fillRect(-3, 18, 6, 36);
+
+      if (!gen.active) {
+        ctx.beginPath();
+        ctx.arc(0, 0, 48, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+        ctx.strokeStyle = "#ff9a3a";
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.fillStyle = "#f5d9a0";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("STAY CLOSE", 0, -48);
+        ctx.fillText(`${Math.floor(progress * 100)}%`, 0, -36);
+      } else {
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = "#67d77b";
+        ctx.fillStyle = "rgba(103, 215, 123, 0.35)";
+        ctx.beginPath();
+        ctx.arc(0, 0, 44, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#b6ffbf";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("POWER ON", 0, -42);
+      }
+
+      ctx.restore();
+    }
+
+    function drawFlashlightOverlay() {
+      const caveDark = isInCave(s.player.x, s.player.y) || s.player.y >= CAVE_RECT.y - 40;
+      if (!caveDark || s.generator?.active || !s.flashlightOn) return;
+
+      const screenX = s.player.x - s.camera.x;
+      const screenY = s.player.y - s.camera.y;
+      const leftAngle = s.player.angle - FLASHLIGHT_CONE_ANGLE / 2;
+      const rightAngle = s.player.angle + FLASHLIGHT_CONE_ANGLE / 2;
+      const leftX = screenX + Math.cos(leftAngle) * FLASHLIGHT_LENGTH;
+      const leftY = screenY + Math.sin(leftAngle) * FLASHLIGHT_LENGTH;
+      const rightX = screenX + Math.cos(rightAngle) * FLASHLIGHT_LENGTH;
+      const rightY = screenY + Math.sin(rightAngle) * FLASHLIGHT_LENGTH;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.80)";
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.moveTo(screenX, screenY);
+      ctx.lineTo(leftX, leftY);
+      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
+      ctx.closePath();
+      ctx.fill("evenodd");
+
+      // add a bright cone pass so the lit area reads clearly
+      ctx.beginPath();
+      ctx.moveTo(screenX, screenY);
+      ctx.lineTo(leftX, leftY);
+      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
+      ctx.closePath();
+      ctx.clip();
+      const coneGlow = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, FLASHLIGHT_LENGTH);
+      coneGlow.addColorStop(0, "rgba(255,250,220,0.45)");
+      coneGlow.addColorStop(0.55, "rgba(255,245,205,0.18)");
+      coneGlow.addColorStop(1, "rgba(255,245,205,0)");
+      ctx.fillStyle = coneGlow;
+      ctx.beginPath();
+      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -697,6 +933,10 @@ export function ZombieGame() {
       s.keys[e.key.toLowerCase()] = true;
       if (e.key.toLowerCase() === "r") tryReload();
       if (e.key.toLowerCase() === "e") tryInteract();
+      if (e.key.toLowerCase() === "f" && s.started && !s.gameOver) {
+        s.flashlightOn = !s.flashlightOn;
+        setMessage(s.flashlightOn ? "FLASHLIGHT ON" : "FLASHLIGHT OFF", 1200);
+      }
     };
     const ku = (e: KeyboardEvent) => {
       s.keys[e.key.toLowerCase()] = false;
@@ -747,6 +987,11 @@ export function ZombieGame() {
       s.lastShot = performance.now();
       s.startTime = performance.now();
       s.endTime = 0;
+      s.flashlightOn = true;
+      if (s.generator) {
+        s.generator.active = false;
+        s.generator.progressMs = 0;
+      }
       setUiState((u) => ({ ...u, started: true, elapsedMs: 0 }));
       setShowHelp(false);
       soundEngine.init();
@@ -1110,6 +1355,28 @@ export function ZombieGame() {
       s.mouse.worldX = s.mouse.x + s.camera.x;
       s.mouse.worldY = s.mouse.y + s.camera.y;
       s.player.angle = Math.atan2(s.mouse.worldY - s.player.y, s.mouse.worldX - s.player.x);
+
+      // cave generator: stay close for 20s to restore power
+      if (s.generator && !s.generator.active) {
+        const genDist = Math.hypot(s.player.x - s.generator.x, s.player.y - s.generator.y);
+        const inRange = genDist <= GENERATOR_INTERACT_DISTANCE;
+        if (inRange) {
+          if (!s.generatorHintShown) {
+            setMessage("STAY CLOSE TO POWER THE GENERATOR", 1800);
+            s.generatorHintShown = true;
+          }
+          s.generator.progressMs = Math.min(GENERATOR_HOLD_MS, s.generator.progressMs + dt * 1000);
+          if (s.generator.progressMs >= GENERATOR_HOLD_MS) {
+            s.generator.active = true;
+            s.generator.progressMs = GENERATOR_HOLD_MS;
+            s.generatorHintShown = false;
+            setMessage("CAVE LIGHTS RESTORED", 2600);
+          }
+        } else {
+          s.generator.progressMs = 0;
+          s.generatorHintShown = false;
+        }
+      }
 
       // reload finish
       if (s.reloadingUntil > 0 && performance.now() >= s.reloadingUntil) {
@@ -1801,6 +2068,24 @@ export function ZombieGame() {
               ctx.fill(); ctx.stroke();
             }
           }
+        } else if (o.type === "caveWall") {
+          const grd = ctx.createLinearGradient(sx, sy, sx + o.w, sy + o.h);
+          grd.addColorStop(0, "#19130f");
+          grd.addColorStop(0.55, "#2d231a");
+          grd.addColorStop(1, "#100c09");
+          ctx.fillStyle = grd;
+          ctx.fillRect(sx, sy, o.w, o.h);
+          ctx.strokeStyle = "rgba(255, 220, 160, 0.08)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx, sy, o.w, o.h);
+          ctx.fillStyle = "rgba(255, 220, 160, 0.05)";
+          for (let i = 0; i < 4; i++) {
+            const rx = sx + 10 + i * (o.w / 4);
+            const ry = sy + 8 + ((i % 2) * 6);
+            ctx.beginPath();
+            ctx.arc(rx, ry, 6 + (i % 3), 0, Math.PI * 2);
+            ctx.fill();
+          }
         } else if (o.type === "barrel") {
           const cx = sx + o.w / 2, cy = sy + o.h / 2, r = o.w / 2;
           const hpRatio = o.hp !== undefined ? Math.max(0, o.hp / 50) : 1;
@@ -2104,6 +2389,7 @@ export function ZombieGame() {
       ctx.fillStyle = s.bossMode ? "#1a0505" : "#0a0d0a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drawGrid();
+      drawCaveArea();
       drawDecals();
       drawMapBounds();
       if (s.bossMode) drawLava();
@@ -2111,6 +2397,7 @@ export function ZombieGame() {
       else drawBossAmmoBoxes();
       drawPickups();
       drawObstacles();
+      drawGenerator();
       drawTotems();
       drawParticles();
       drawZombies();
@@ -2119,6 +2406,7 @@ export function ZombieGame() {
       drawPlayer();
       drawBullets();
       drawFog();
+      drawFlashlightOverlay();
       drawHitFlash();
       drawTransitionFlash();
       drawMessage();
@@ -2272,9 +2560,11 @@ export function ZombieGame() {
                 <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
                 <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
                 <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
+                <div><span className="text-[#c9a24a] font-bold">STAY CLOSE</span> — Power the cave generator for 20 seconds</div>
+                <div><span className="text-[#c9a24a] font-bold">F</span> — Toggle flashlight</div>
                 <div className="pt-2 text-[#8a8a6a] text-xs">
                   Kill zombies to earn points. Spend points at the yellow buy stations to unlock stronger weapons.
-                  Green boxes refill ammo. Survive as many rounds as you can.
+                  Green boxes refill ammo. Find the cave at the bottom of the map and bring the power online.
                 </div>
               </div>
             )}
