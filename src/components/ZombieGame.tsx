@@ -2206,26 +2206,40 @@ export function ZombieGame() {
             </div>
           </div>
 
-          {/* Health — bottom on desktop, top-center-under-time on mobile */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-14 sm:top-auto sm:left-4 sm:translate-x-0 sm:bottom-4 font-mono pointer-events-none">
+          {/* Health — bottom on desktop, top-center on touch devices (portrait & landscape phones) */}
+          <div
+            className={
+              isMobile
+                ? "absolute left-1/2 -translate-x-1/2 top-14 font-mono pointer-events-none"
+                : "absolute left-4 bottom-4 font-mono pointer-events-none"
+            }
+          >
             <div className="bg-black/60 border border-[#3a3a1a] px-2 py-1 sm:px-4 sm:py-2 rounded-sm">
-              <div className="hidden sm:flex items-center gap-2 mb-1">
-                <div className="text-xs text-[#8a8a6a]">HEALTH</div>
-              </div>
-              <div className="w-40 sm:w-56 h-2 sm:h-3 bg-[#1a0505] border border-[#3a1010]">
+              {!isMobile && (
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="text-xs text-[#8a8a6a]">HEALTH</div>
+                </div>
+              )}
+              <div className={(isMobile ? "w-40 h-2" : "w-56 h-3") + " bg-[#1a0505] border border-[#3a1010]"}>
                 <div
                   className="h-full bg-gradient-to-r from-[#8a1010] to-[#c93030] transition-all"
                   style={{ width: `${uiState.hp}%` }}
                 />
               </div>
-              <div className="text-[10px] sm:text-xs text-[#a89060] mt-0.5 sm:mt-1 text-center sm:text-left">
+              <div className={"text-[10px] sm:text-xs text-[#a89060] mt-0.5 sm:mt-1 " + (isMobile ? "text-center" : "text-left")}>
                 {uiState.hp} / 100
               </div>
             </div>
           </div>
 
-          {/* Weapon — bottom-right on desktop, compact top-right-below-pts on mobile */}
-          <div className="absolute top-11 right-2 sm:top-auto sm:right-4 sm:bottom-4 font-mono text-right pointer-events-none">
+          {/* Weapon — bottom-right on desktop, compact top-right-below-pts on touch */}
+          <div
+            className={
+              isMobile
+                ? "absolute top-11 right-2 font-mono text-right pointer-events-none"
+                : "absolute bottom-4 right-4 font-mono text-right pointer-events-none"
+            }
+          >
             <div className="bg-black/60 border border-[#3a3a1a] px-2 py-1 sm:px-4 sm:py-2 rounded-sm">
               <div className="text-[9px] sm:text-xs text-[#8a8a6a] truncate max-w-[110px] sm:max-w-none">
                 {uiState.weaponName.toUpperCase()}
