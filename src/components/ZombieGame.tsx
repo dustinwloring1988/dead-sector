@@ -483,7 +483,20 @@ export function ZombieGame() {
     elapsedMs: 0,
   });
   const [showHelp, setShowHelp] = useState(true);
-  const isMobile = useIsMobile();
+  const isMobileWidth = useIsMobile();
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsCoarsePointer(mq.matches);
+    update();
+    mq.addEventListener?.("change", update);
+    return () => mq.removeEventListener?.("change", update);
+  }, []);
+  // Touch controls whenever the device has a coarse pointer (mobile portrait
+  // OR landscape, incl. wider-than-768 landscape phones) or the viewport is
+  // narrow enough to be considered mobile.
+  const isMobile = isMobileWidth || isCoarsePointer;
 
   const stateRef = useRef({
     player: { x: MAP_W / 2, y: MAP_H / 2, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
