@@ -813,6 +813,7 @@ export function ZombieGame() {
           soundEngine.buyWeapon();
           const w = WEAPONS[s.currentWeaponKey];
           const pw = s.weapons[s.currentWeaponKey];
+          pw.mag = w.mag;
           pw.reserve = w.reserve;
           setMessage("Max ammo!");
           syncWeaponUi();
@@ -1397,6 +1398,7 @@ export function ZombieGame() {
           s.boss = null;
           s.bossMode = false;
           s.won = true;
+          s.gameOver = true;
           s.points += 5000;
           setUiState((u) => ({ ...u, gameOver: true, points: s.points, zombiesLeft: 0 }));
         }
