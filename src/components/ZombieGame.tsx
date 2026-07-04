@@ -2290,6 +2290,10 @@ export function ZombieGame() {
           </div>
         </div>
       )}
+
+      {isMobile && uiState.started && !uiState.gameOver && (
+        <TouchControls stateRef={stateRef} canvasRef={canvasRef} />
+      )}
     </div>
   );
 }
