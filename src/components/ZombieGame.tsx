@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // Dead Sector — original round-based top-down zombie shooter.
 // Not affiliated with any existing franchise.
