@@ -2165,56 +2165,64 @@ export function ZombieGame() {
       {/* HUD */}
       {uiState.started && !uiState.gameOver && (
         <>
-          <div className="absolute top-4 left-4 font-mono text-[#c9a24a] pointer-events-none">
-            <div className="text-3xl font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              {uiState.round === 999 ? "BOSS FIGHT" : `ROUND ${uiState.round}`}
+          <div className="absolute top-2 left-2 sm:top-4 sm:left-4 font-mono text-[#c9a24a] pointer-events-none">
+            <div className="text-lg sm:text-3xl font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+              {uiState.round === 999 ? "BOSS" : `R${uiState.round}`}
+              <span className="hidden sm:inline">
+                {uiState.round === 999 ? " FIGHT" : ""}
+              </span>
             </div>
             {uiState.round !== 999 && (
-              <div className="mt-2 text-sm text-[#a89060]">
-                ZOMBIES: {uiState.zombiesLeft}
+              <div className="mt-0.5 sm:mt-2 text-[10px] sm:text-sm text-[#a89060]">
+                Z: {uiState.zombiesLeft}
               </div>
             )}
           </div>
 
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 font-mono pointer-events-none text-center">
-            <div className="text-[10px] tracking-[0.3em] text-[#8a8a6a]">TIME</div>
-            <div className="text-3xl font-bold tabular-nums text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+          <div className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 font-mono pointer-events-none text-center">
+            <div className="hidden sm:block text-[10px] tracking-[0.3em] text-[#8a8a6a]">TIME</div>
+            <div className="text-base sm:text-3xl font-bold tabular-nums text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
               {formatTime(uiState.elapsedMs)}
             </div>
           </div>
 
-
-
-          <div className="absolute top-4 right-4 font-mono text-right pointer-events-none">
-            <div className="text-2xl font-bold text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              {uiState.points} PTS
+          <div className="absolute top-2 right-2 sm:top-4 sm:right-4 font-mono text-right pointer-events-none">
+            <div className="text-base sm:text-2xl font-bold text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+              {uiState.points}
+              <span className="text-[10px] sm:text-base"> PTS</span>
             </div>
           </div>
 
-          <div className="absolute bottom-4 left-4 font-mono pointer-events-none">
-            <div className="bg-black/60 border border-[#3a3a1a] px-4 py-2 rounded-sm">
-              <div className="flex items-center gap-2 mb-1">
+          {/* Health — bottom on desktop, top-center-under-time on mobile */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-14 sm:top-auto sm:left-4 sm:translate-x-0 sm:bottom-4 font-mono pointer-events-none">
+            <div className="bg-black/60 border border-[#3a3a1a] px-2 py-1 sm:px-4 sm:py-2 rounded-sm">
+              <div className="hidden sm:flex items-center gap-2 mb-1">
                 <div className="text-xs text-[#8a8a6a]">HEALTH</div>
               </div>
-              <div className="w-56 h-3 bg-[#1a0505] border border-[#3a1010]">
+              <div className="w-40 sm:w-56 h-2 sm:h-3 bg-[#1a0505] border border-[#3a1010]">
                 <div
                   className="h-full bg-gradient-to-r from-[#8a1010] to-[#c93030] transition-all"
                   style={{ width: `${uiState.hp}%` }}
                 />
               </div>
-              <div className="text-xs text-[#a89060] mt-1">{uiState.hp} / 100</div>
+              <div className="text-[10px] sm:text-xs text-[#a89060] mt-0.5 sm:mt-1 text-center sm:text-left">
+                {uiState.hp} / 100
+              </div>
             </div>
           </div>
 
-          <div className="absolute bottom-4 right-4 font-mono text-right pointer-events-none">
-            <div className="bg-black/60 border border-[#3a3a1a] px-4 py-2 rounded-sm">
-              <div className="text-xs text-[#8a8a6a]">{uiState.weaponName.toUpperCase()}</div>
-              <div className="text-3xl font-bold text-[#c9a24a]">
+          {/* Weapon — bottom-right on desktop, compact top-right-below-pts on mobile */}
+          <div className="absolute top-11 right-2 sm:top-auto sm:right-4 sm:bottom-4 font-mono text-right pointer-events-none">
+            <div className="bg-black/60 border border-[#3a3a1a] px-2 py-1 sm:px-4 sm:py-2 rounded-sm">
+              <div className="text-[9px] sm:text-xs text-[#8a8a6a] truncate max-w-[110px] sm:max-w-none">
+                {uiState.weaponName.toUpperCase()}
+              </div>
+              <div className="text-lg sm:text-3xl font-bold text-[#c9a24a] leading-tight">
                 {uiState.reloading ? "..." : uiState.mag}
-                <span className="text-lg text-[#8a7a4a]"> / {uiState.reserve}</span>
+                <span className="text-xs sm:text-lg text-[#8a7a4a]"> / {uiState.reserve}</span>
               </div>
               {uiState.reloading && (
-                <div className="text-xs text-[#c93030] animate-pulse">RELOADING</div>
+                <div className="text-[9px] sm:text-xs text-[#c93030] animate-pulse">RELOADING</div>
               )}
             </div>
           </div>
