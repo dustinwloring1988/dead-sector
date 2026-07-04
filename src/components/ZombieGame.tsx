@@ -813,7 +813,6 @@ export function ZombieGame() {
           soundEngine.buyWeapon();
           const w = WEAPONS[s.currentWeaponKey];
           const pw = s.weapons[s.currentWeaponKey];
-          pw.mag = w.mag;
           pw.reserve = w.reserve;
           setMessage("Max ammo!");
           syncWeaponUi();
