@@ -2468,7 +2468,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
   };
 
   const joyBase =
-    "absolute w-32 h-32 rounded-full bg-black/40 border-2 border-[#c9a24a]/60 touch-none pointer-events-auto";
+    "absolute w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-black/40 border-2 border-[#c9a24a]/60 touch-none pointer-events-auto";
   const knobStyle = (k: { x: number; y: number; active: boolean }) => ({
     transform: `translate(-50%, -50%) translate(${k.x}px, ${k.y}px)`,
     opacity: k.active ? 1 : 0.7,
@@ -2476,41 +2476,45 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-20">
-      {/* Movement joystick */}
+      {/* Movement joystick — bottom-left, hugs the corner so it fits in landscape */}
       <div
         ref={moveRef}
-        className={joyBase}
-        style={{ left: 24, bottom: 120 }}
+        className={`${joyBase} left-4 bottom-4 sm:left-6 sm:bottom-24`}
       >
         <div
-          className="absolute top-1/2 left-1/2 w-14 h-14 rounded-full bg-[#c9a24a]/80 border border-black/40"
+          className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c9a24a]/80 border border-black/40"
           style={knobStyle(moveKnob)}
         />
       </div>
 
-      {/* Aim + fire joystick */}
+      {/* Aim + fire joystick — bottom-right */}
       <div
         ref={aimRef}
-        className={joyBase}
-        style={{ right: 24, bottom: 120 }}
+        className={`${joyBase} right-4 bottom-4 sm:right-6 sm:bottom-24`}
       >
         <div
-          className="absolute top-1/2 left-1/2 w-14 h-14 rounded-full bg-[#c93030]/80 border border-black/40"
+          className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c93030]/80 border border-black/40"
           style={knobStyle(aimKnob)}
         />
-        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-mono text-[#c9a24a] tracking-widest">
+        <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] sm:text-[10px] font-mono text-[#c9a24a] tracking-widest whitespace-nowrap">
           AIM / FIRE
         </div>
       </div>
 
-      {/* Action buttons */}
-      <div className="absolute right-6 bottom-[270px] flex flex-col gap-3 pointer-events-auto">
+      {/* Action buttons — stacked above the aim joystick on portrait phones,
+          placed inline to the left of the aim stick on short (landscape) viewports
+          so they never overflow the top of the screen. */}
+      <div
+        className="absolute right-36 bottom-6 flex-row gap-2 pointer-events-auto flex
+                   [@media(min-height:500px)]:right-6 [@media(min-height:500px)]:bottom-[260px]
+                   [@media(min-height:500px)]:flex-col [@media(min-height:500px)]:gap-3"
+      >
         <button
           onPointerDown={(e) => {
             e.preventDefault();
             tapKey("r");
           }}
-          className="w-16 h-16 rounded-full bg-black/60 border-2 border-[#c9a24a]/70 font-mono text-[#c9a24a] text-sm font-bold touch-none"
+          className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-black/60 border-2 border-[#c9a24a]/70 font-mono text-[#c9a24a] text-xs sm:text-sm font-bold touch-none"
         >
           RELOAD
         </button>
@@ -2519,7 +2523,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
             e.preventDefault();
             tapKey("e");
           }}
-          className="w-16 h-16 rounded-full bg-black/60 border-2 border-[#c9a24a]/70 font-mono text-[#c9a24a] text-sm font-bold touch-none"
+          className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-black/60 border-2 border-[#c9a24a]/70 font-mono text-[#c9a24a] text-xs sm:text-sm font-bold touch-none"
         >
           USE
         </button>
