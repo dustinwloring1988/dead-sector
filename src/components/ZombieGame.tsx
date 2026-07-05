@@ -520,6 +520,10 @@ export function ZombieGame() {
     started: false,
     message: "",
     elapsedMs: 0,
+    kills: 0,
+    shotsFired: 0,
+    shotsHit: 0,
+    showingFireworks: false,
   });
   const [showHelp, setShowHelp] = useState(true);
   const isMobileWidth = useIsMobile();
@@ -595,6 +599,11 @@ export function ZombieGame() {
     groundInit: false,
     walkPhase: 0,
     muzzleFlash: 0,
+    kills: 0,
+    shotsFired: 0,
+    shotsHit: 0,
+    showingFireworks: false,
+    fireworksTimer: 0,
     generator: {
       x: GENERATOR_POS.x,
       y: GENERATOR_POS.y,
@@ -1378,6 +1387,7 @@ export function ZombieGame() {
           dmg: w.dmg,
         });
       }
+      s.shotsFired += w.pellets;
       soundEngine.shoot(key);
       haptic(key === "shotgun" ? 25 : key === "rifle" ? 18 : key === "lmg" ? 12 : 10);
       // muzzle flash
@@ -1417,7 +1427,7 @@ export function ZombieGame() {
         s.gameOver = true;
         soundEngine.setMusic("menu");
         haptic([80, 60, 120, 60, 200]);
-        setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+        setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
       } else {
         haptic([30, 20, 40]);
       }
@@ -1492,6 +1502,7 @@ export function ZombieGame() {
     }
 
     function killZombie(z: Zombie, headshot = false) {
+      s.kills++;
       s.zombiesAlive--;
       if (z.type === "fire") s.fireZombieAlive = false;
       const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : 60) + (headshot ? 30 : 0);
@@ -1856,6 +1867,7 @@ export function ZombieGame() {
           if (dx * dx + dy * dy < z.radius * z.radius) {
             z.hp -= b.dmg;
             hit = true;
+            s.shotsHit++;
             soundEngine.zombieHit();
             for (let k = 0; k < 5; k++) {
               const a = Math.random() * Math.PI * 2;
@@ -2075,6 +2087,7 @@ export function ZombieGame() {
           const bdx = bs.x - b.x, bdy = bs.y - b.y;
           if (bdx * bdx + bdy * bdy < bs.radius * bs.radius) {
             bs.hp -= b.dmg;
+            s.shotsHit++;
             soundEngine.zombieHit();
             (bs as any).hitFlash = 1;
             (bs as any).hitShake = Math.min(12, ((bs as any).hitShake || 0) + 6);
@@ -2098,9 +2111,11 @@ export function ZombieGame() {
           s.boss = null;
           s.bossMode = false;
           s.won = true;
+          s.kills++;
           s.gameOver = true;
+          s.showingFireworks = true;
+          s.fireworksTimer = 2.0;
           s.points += 5000;
-          setUiState((u) => ({ ...u, gameOver: true, points: s.points, zombiesLeft: 0 }));
         }
       }
 
@@ -2130,7 +2145,7 @@ export function ZombieGame() {
               s.hitFlash = Math.max(s.hitFlash, 0.5);
               if (s.player.hp <= 0) {
                 s.player.hp = 0; s.gameOver = true;
-                setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+        setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
               } else {
                 setUiState((u) => ({ ...u, hp: s.player.hp }));
               }
@@ -2157,10 +2172,10 @@ export function ZombieGame() {
             soundEngine.lavaBurn();
             s.player.hp -= 5;
             s.hitFlash = Math.max(s.hitFlash, 0.4);
-            if (s.player.hp <= 0) {
-              s.player.hp = 0; s.gameOver = true;
-              setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
-            } else {
+              if (s.player.hp <= 0) {
+                s.player.hp = 0; s.gameOver = true;
+                setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+              } else {
               setUiState((u) => ({ ...u, hp: s.player.hp }));
             }
           }
@@ -3134,6 +3149,47 @@ export function ZombieGame() {
       const dt = Math.min(0.05, (t - (s.lastTime || t)) / 1000);
       s.lastTime = t;
       update(dt);
+
+      // Fireworks phase: update particles and spawn bursts
+      if (s.showingFireworks) {
+        s.fireworksTimer -= dt;
+        // Update existing particles (update() returns early on gameOver)
+        for (let i = s.particles.length - 1; i >= 0; i--) {
+          const p = s.particles[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vx *= 0.92; p.vy *= 0.92;
+          p.life -= dt;
+          if (p.life <= 0) s.particles.splice(i, 1);
+        }
+        // Spawn firework bursts at random positions
+        if (Math.random() < dt * 4) {
+          const fx = s.camera.x + Math.random() * canvas.width;
+          const fy = s.camera.y + Math.random() * canvas.height * 0.7;
+          const colors = ["#ff4444", "#44ff44", "#4444ff", "#ffff44", "#ff44ff", "#44ffff", "#ffaa22", "#ff22aa", "#22ffaa", "#ffffff", "#ffcc55"];
+          const burstColor = colors[Math.floor(Math.random() * colors.length)];
+          const count = 20 + Math.floor(Math.random() * 25);
+          for (let i = 0; i < count; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const sp = 80 + Math.random() * 200;
+            s.particles.push({
+              x: fx, y: fy,
+              vx: Math.cos(a) * sp,
+              vy: Math.sin(a) * sp - 40,
+              life: 0.6 + Math.random() * 0.8,
+              maxLife: 1.4,
+              color: Math.random() < 0.3 ? "#ffffff" : burstColor,
+              size: 2 + Math.random() * 3,
+            });
+          }
+        }
+        // Transition to victory popup
+        if (s.fireworksTimer <= 0) {
+          s.showingFireworks = false;
+          setUiState((u) => ({ ...u, showingFireworks: false, gameOver: true, points: s.points, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit, zombiesLeft: 0 }));
+        }
+      }
+
       render();
       raf = requestAnimationFrame(loop);
     };
@@ -3277,8 +3333,7 @@ export function ZombieGame() {
                 <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
                 <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
                 <div className="pt-2 text-[#8a8a6a] text-xs">
-                  Kill zombies to earn points. Spend points at the yellow buy stations to unlock stronger weapons.
-                  Green boxes refill ammo. Find the cave at the bottom of the map and bring the power online.
+                  Kill zombies to earn points. Complete Tasks to get to the boss.
                 </div>
               </div>
             )}
@@ -3296,34 +3351,90 @@ export function ZombieGame() {
 
       {/* Game over / Victory */}
       {uiState.gameOver && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <div className="text-center font-mono">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div
+            className="text-center font-mono max-w-md w-full mx-4"
+            style={{ animation: "fadeSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards" }}
+          >
             {uiState.hp > 0 ? (
               <>
-                <h1 className="text-7xl font-bold text-[#c9a24a] tracking-widest drop-shadow-[0_4px_10px_rgba(201,162,74,0.5)]">
-                  VICTORY
-                </h1>
-                <p className="text-[#a89060] mt-4 text-xl">
-                  THE HARBINGER HAS FALLEN
-                </p>
+                <div className="border-2 border-[#c9a24a]/40 bg-black/60 p-8 rounded-sm">
+                  <h1
+                    className="text-7xl font-bold text-[#c9a24a] tracking-widest"
+                    style={{ animation: "pulseGlow 2s ease-in-out infinite" }}
+                  >
+                    VICTORY
+                  </h1>
+                  <p className="text-[#a89060] mt-3 text-xl tracking-wider">
+                    THE HARBINGER HAS FALLEN
+                  </p>
+                  {uiState.elapsedMs < 600000 && (
+                    <div className="mt-3 inline-block px-4 py-1 bg-[#c9a24a]/20 border border-[#c9a24a]/50 rounded-sm">
+                      <span className="text-[#c9a24a] font-bold text-lg tracking-widest">
+                        {uiState.elapsedMs < 480000 ? "S-RANK" : uiState.elapsedMs < 600000 ? "A-RANK" : ""}
+                      </span>
+                    </div>
+                  )}
+                  <div className="mt-6 space-y-2 text-sm">
+                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
+                      <span className="text-[#8a8a6a]">POINTS</span>
+                      <span className="text-[#c9a24a] font-bold">{uiState.points}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
+                      <span className="text-[#8a8a6a]">TIME</span>
+                      <span className="text-[#c9a24a] font-bold tabular-nums">{formatTime(uiState.elapsedMs)}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
+                      <span className="text-[#8a8a6a]">KILLS</span>
+                      <span className="text-[#c9a24a] font-bold">{uiState.kills}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#8a8a6a]">ACCURACY</span>
+                      <span className="text-[#c9a24a] font-bold">
+                        {uiState.shotsFired > 0 ? Math.round((uiState.shotsHit / uiState.shotsFired) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </>
             ) : (
               <>
-                <h1 className="text-7xl font-bold text-[#c93030] tracking-widest">
-                  YOU DIED
-                </h1>
-                <p className="text-[#a89060] mt-4 text-xl">
-                  SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
-                </p>
+                <div className="border-2 border-[#c93030]/40 bg-black/60 p-8 rounded-sm">
+                  <h1
+                    className="text-7xl font-bold text-[#c93030] tracking-widest"
+                    style={{ animation: "pulseGlowRed 2s ease-in-out infinite" }}
+                  >
+                    YOU DIED
+                  </h1>
+                  <p className="text-[#a89060] mt-3 text-xl tracking-wider">
+                    SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
+                  </p>
+                  <div className="mt-6 space-y-2 text-sm">
+                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
+                      <span className="text-[#8a8a6a]">POINTS</span>
+                      <span className="text-[#c9a24a] font-bold">{uiState.points}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
+                      <span className="text-[#8a8a6a]">TIME</span>
+                      <span className="text-[#c9a24a] font-bold tabular-nums">{formatTime(uiState.elapsedMs)}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
+                      <span className="text-[#8a8a6a]">KILLS</span>
+                      <span className="text-[#c9a24a] font-bold">{uiState.kills}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#8a8a6a]">ACCURACY</span>
+                      <span className="text-[#c9a24a] font-bold">
+                        {uiState.shotsFired > 0 ? Math.round((uiState.shotsHit / uiState.shotsFired) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </>
             )}
-            <p className="text-[#8a8a6a] mt-1">{uiState.points} TOTAL POINTS</p>
-            <p className="text-[#c9a24a] mt-2 text-2xl font-bold tabular-nums tracking-widest">
-              TIME {formatTime(uiState.elapsedMs)}
-            </p>
             <button
               onClick={restart}
-              className="mt-10 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
+              className="mt-8 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
             >
               REDEPLOY
             </button>
