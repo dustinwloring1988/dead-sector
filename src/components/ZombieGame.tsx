@@ -7,8 +7,9 @@ import { useIsMobile } from "@/hooks/use-mobile";
 type Vec = { x: number; y: number };
 
 type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
-type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" | "toxic" };
+type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" | "toxic" | "fireMiniboss" | "toxicMiniboss" };
 type ToxicGas = Vec & { radius: number; life: number; maxLife: number };
+type ToxicProjectile = Vec & { vx: number; vy: number; distTraveled: number; maxDist: number };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
 type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door" | "golfDoor"; hp?: number };
@@ -578,6 +579,13 @@ export function ZombieGame() {
     torches: [] as { x: number; y: number; lit: boolean }[],
     fireZombieToSpawn: false as boolean,
     fireZombieAlive: false as boolean,
+    minibossSpawned: false as boolean,
+    minibossAlive: false as boolean,
+    lastMinibossShot: 0 as number,
+    toxicMinibossSpawned: false as boolean,
+    toxicMinibossAlive: false as boolean,
+    lastToxicMinibossShot: 0 as number,
+    toxicProjectiles: [] as ToxicProjectile[],
     transitionFlash: 0,
     bossMode: false,
     boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number },
@@ -1365,6 +1373,52 @@ export function ZombieGame() {
       s.fireZombieAlive = true;
     }
 
+    function spawnFireMiniboss() {
+      let cx = s.player.x;
+      let cy = s.player.y;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 700;
+        const x = s.player.x + Math.cos(angle) * dist;
+        const y = s.player.y + Math.sin(angle) * dist;
+        cx = Math.max(50, Math.min(MAP_W - 50, x));
+        cy = Math.max(50, Math.min(MAP_H - 50, y));
+        if (!isInCave(cx, cy)) break;
+      }
+      if (isInCave(cx, cy)) {
+        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
+      }
+      if (cx >= GOLF_ROOM_RECT.x && cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w && cy >= GOLF_ROOM_RECT.y && cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h) {
+        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
+      }
+      const hp = (30 + s.round * 15) * 3;
+      const speed = 50 + s.round * 3;
+      const radius = 24;
+      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "fireMiniboss" });
+      s.zombiesAlive++;
+      s.minibossAlive = true;
+      s.minibossSpawned = true;
+      s.lastMinibossShot = performance.now();
+      setMessage("FIRE ZOMBIE MINIBOSS!", 2600);
+      soundEngine.bossEnrage();
+    }
+
+    function spawnToxicMiniboss() {
+      // spawn in or near the cave
+      const cx = CAVE_RECT.x + CAVE_RECT.w / 2 + (Math.random() - 0.5) * 300;
+      const cy = CAVE_RECT.y + CAVE_RECT.h / 2 + (Math.random() - 0.5) * 200;
+      const hp = (30 + s.round * 15) * 3;
+      const speed = 45 + s.round * 3;
+      const radius = 22;
+      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "toxicMiniboss" });
+      s.zombiesAlive++;
+      s.toxicMinibossAlive = true;
+      s.toxicMinibossSpawned = true;
+      s.lastToxicMinibossShot = performance.now();
+      setMessage("TOXIC MINIBOSS!", 2600);
+      soundEngine.bossEnrage();
+    }
+
     function shoot() {
       const key = s.currentWeaponKey;
       const w = WEAPONS[key];
@@ -1505,12 +1559,78 @@ export function ZombieGame() {
       s.kills++;
       s.zombiesAlive--;
       if (z.type === "fire") s.fireZombieAlive = false;
-      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : 60) + (headshot ? 30 : 0);
+      if (z.type === "fireMiniboss") s.minibossAlive = false;
+      if (z.type === "toxicMiniboss") s.toxicMinibossAlive = false;
+      const pts = (z.type === "brute" ? 200 : z.type === "fireMiniboss" ? 300 : z.type === "toxicMiniboss" ? 300 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : 60) + (headshot ? 30 : 0);
       s.points += pts;
       soundEngine.zombieDeath();
+      // fireMiniboss: big explosion, drops, advance totem phase
+      if (z.type === "fireMiniboss") {
+        for (let i = 0; i < 40; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 80 + Math.random() * 260;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.7 + Math.random() * 0.5, maxLife: 1.2,
+            color: Math.random() < 0.3 ? "#ff2200" : Math.random() < 0.6 ? "#ff6600" : "#ffaa00",
+            size: 4 + Math.random() * 6,
+          });
+        }
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * 2.0, color: "#4a2008", alpha: 0.6, kind: "scorch" });
+        if (s.decals.length > 120) s.decals.shift();
+        s.camera.shake = Math.min(s.camera.shake + 12, 20);
+        // guaranteed health and ammo drops
+        s.pickups.push({ x: z.x - 15, y: z.y, kind: "health", life: 20 });
+        s.pickups.push({ x: z.x + 15, y: z.y, kind: "ammo", life: 20 });
+        setMessage("MINIBOSS DEFEATED!", 2600);
+        // advance totem phase after miniboss death
+        if (s.totemPhase === 0) {
+          setTimeout(() => {
+            if (s.generator.active) {
+              s.totemPhase = 2;
+              setMessage("THE CAVE AWAKENS...", 2600);
+            } else {
+              s.totemPhase = 1;
+              setMessage("THE CAVE REQUIRES POWER...", 2600);
+            }
+          }, 2000);
+        }
+      } else if (z.type === "toxicMiniboss") {
+        // toxic miniboss: green gas explosion, drops, advance totem phase
+        for (let i = 0; i < 40; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 200;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.8 + Math.random() * 0.5, maxLife: 1.3,
+            color: Math.random() < 0.3 ? "#22cc22" : Math.random() < 0.6 ? "#33aa33" : "#44dd44",
+            size: 4 + Math.random() * 6,
+          });
+        }
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * 2.0, color: "#0a3a0a", alpha: 0.6, kind: "scorch" });
+        if (s.decals.length > 120) s.decals.shift();
+        s.camera.shake = Math.min(s.camera.shake + 12, 20);
+        // spawn gas clouds on death
+        for (let i = 0; i < 3; i++) {
+          const offX = (Math.random() - 0.5) * 80;
+          const offY = (Math.random() - 0.5) * 80;
+          s.toxicGas.push({ x: z.x + offX, y: z.y + offY, radius: 50 + Math.random() * 20, life: 5, maxLife: 5 });
+        }
+        // guaranteed health and ammo drops
+        s.pickups.push({ x: z.x - 15, y: z.y, kind: "health", life: 20 });
+        s.pickups.push({ x: z.x + 15, y: z.y, kind: "ammo", life: 20 });
+        setMessage("TOXIC MINIBOSS DEFEATED!", 2600);
+        // advance totem phase after miniboss death
+        if (s.totemPhase === 2) {
+          setTimeout(() => {
+            s.totemPhase = 3;
+            s.totems.push({ x: MAP_W / 2, y: SURFACE_CENTER_Y, kills: 0, need: 25, active: true, id: "CORE" });
+            setMessage("THE CORE CALLS...", 2600);
+          }, 2000);
+        }
+      } else if (z.type === "fire") {
       // fire zombie: check if near unlit torch
-      if (z.type === "fire") {
-        for (const torch of s.torches) {
+      for (const torch of s.torches) {
           if (torch.lit) continue;
           const dx = torch.x - z.x, dy = torch.y - z.y;
           if (dx * dx + dy * dy < TORCH_LIGHT_RADIUS * TORCH_LIGHT_RADIUS) {
@@ -1528,14 +1648,10 @@ export function ZombieGame() {
                 size: 3 + Math.random() * 4,
               });
             }
-            // check if all torches lit → advance totem phase
+            // check if all torches lit → spawn miniboss
             if (s.totemPhase === 0 && s.torches.every((t) => t.lit)) {
-              if (s.generator.active) {
-                s.totemPhase = 2;
-                setMessage("THE CAVE AWAKENS...", 2600);
-              } else {
-                s.totemPhase = 1;
-                setMessage("THE CAVE REQUIRES POWER...", 2600);
+              if (!s.minibossSpawned) {
+                spawnFireMiniboss();
               }
             }
             break;
@@ -1586,8 +1702,8 @@ export function ZombieGame() {
           });
         }
       }
-      // random pickup
-      if (Math.random() < 0.06) {
+      // random pickup (skip for minibosses, they always drop both)
+      if (z.type !== "fireMiniboss" && z.type !== "toxicMiniboss" && Math.random() < 0.06) {
         s.pickups.push({ x: z.x, y: z.y, kind: Math.random() < 0.5 ? "ammo" : "health", life: 15 });
       }
       // easter egg: totem progression (cave totem / core totem only)
@@ -1601,9 +1717,9 @@ export function ZombieGame() {
             soundEngine.totemAwaken();
             setMessage(`TOTEM ${t.id} AWAKENED`);
             if (s.totemPhase === 2 && t.id === "CAVE") {
-              s.totemPhase = 3;
-              s.totems.push({ x: MAP_W / 2, y: SURFACE_CENTER_Y, kills: 0, need: 25, active: true, id: "CORE" });
-              setMessage("THE CORE CALLS...", 2600);
+              if (!s.toxicMinibossSpawned) {
+                spawnToxicMiniboss();
+              }
             } else if (s.totemPhase === 3) {
               s.totemPhase = 4;
               s.transitionFlash = 1;
@@ -1621,7 +1737,6 @@ export function ZombieGame() {
               setTimeout(() => enterBossMap(), 1600);
             }
           }
-          break;
         }
       }
       setUiState((u) => ({ ...u, points: s.points, zombiesLeft: Math.max(0, s.zombiesToSpawn) + s.zombiesAlive }));
@@ -1929,7 +2044,62 @@ export function ZombieGame() {
           (s as any)._resolveObstacles(z, z.radius);
         }
         if (d < z.radius + s.player.r) {
-          damagePlayer(z.type === "brute" ? 25 : z.type === "runner" ? 12 : 15);
+          damagePlayer(z.type === "brute" ? 25 : z.type === "fireMiniboss" ? 20 : z.type === "toxicMiniboss" ? 18 : z.type === "runner" ? 12 : 15);
+        }
+        // fireMiniboss: shoot fireball every 4 seconds
+        if (z.type === "fireMiniboss") {
+          const now = performance.now();
+          if (now - s.lastMinibossShot > 4000) {
+            s.lastMinibossShot = now;
+            const a = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+            s.bossBullets.push({
+              x: z.x + Math.cos(a) * z.radius,
+              y: z.y + Math.sin(a) * z.radius,
+              vx: Math.cos(a) * 400,
+              vy: Math.sin(a) * 400,
+              life: 3.0,
+              dmg: 20,
+            });
+            s.camera.shake = Math.min(s.camera.shake + 4, 12);
+            // fireball spawn particles
+            for (let k = 0; k < 6; k++) {
+              const pa = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: z.x + Math.cos(a) * z.radius, y: z.y + Math.sin(a) * z.radius,
+                vx: Math.cos(pa) * 60, vy: Math.sin(pa) * 60,
+                life: 0.3, maxLife: 0.3,
+                color: Math.random() < 0.5 ? "#ff6600" : "#ffaa00", size: 3,
+              });
+            }
+          }
+        }
+        // toxicMiniboss: throw toxic gas cloud every 3 seconds
+        if (z.type === "toxicMiniboss") {
+          const now = performance.now();
+          if (now - s.lastToxicMinibossShot > 3000) {
+            s.lastToxicMinibossShot = now;
+            const a = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+            const throwSpeed = 170;
+            s.toxicProjectiles.push({
+              x: z.x + Math.cos(a) * z.radius,
+              y: z.y + Math.sin(a) * z.radius,
+              vx: Math.cos(a) * throwSpeed,
+              vy: Math.sin(a) * throwSpeed,
+              distTraveled: 0,
+              maxDist: 50,
+            });
+            s.camera.shake = Math.min(s.camera.shake + 3, 10);
+            // throw spawn particles
+            for (let k = 0; k < 5; k++) {
+              const pa = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: z.x + Math.cos(a) * z.radius, y: z.y + Math.sin(a) * z.radius,
+                vx: Math.cos(pa) * 50, vy: Math.sin(pa) * 50,
+                life: 0.3, maxLife: 0.3,
+                color: Math.random() < 0.5 ? "#33cc33" : "#22aa22", size: 3,
+              });
+            }
+          }
         }
       }
       // separate zombies
@@ -2152,6 +2322,41 @@ export function ZombieGame() {
             }
             break;
           }
+        }
+      }
+
+      // toxic projectile update: move toward target, land when traveled enough
+      for (let i = s.toxicProjectiles.length - 1; i >= 0; i--) {
+        const p = s.toxicProjectiles[i];
+        const moveX = p.vx * dt;
+        const moveY = p.vy * dt;
+        const moveDist = Math.hypot(moveX, moveY);
+        p.x += moveX;
+        p.y += moveY;
+        p.distTraveled += moveDist;
+        // trail particles
+        if (Math.random() < 0.5) {
+          s.particles.push({
+            x: p.x, y: p.y,
+            vx: (Math.random() - 0.5) * 30, vy: (Math.random() - 0.5) * 30,
+            life: 0.25, maxLife: 0.25,
+            color: Math.random() < 0.5 ? "#33cc33" : "#22aa22", size: 2,
+          });
+        }
+        // landed: convert to toxic gas cloud
+        if (p.distTraveled >= p.maxDist) {
+          s.toxicGas.push({ x: p.x, y: p.y, radius: 60, life: 4, maxLife: 4 });
+          // landing burst particles
+          for (let k = 0; k < 8; k++) {
+            const a = Math.random() * Math.PI * 2;
+            s.particles.push({
+              x: p.x, y: p.y,
+              vx: Math.cos(a) * 50, vy: Math.sin(a) * 50,
+              life: 0.4, maxLife: 0.4,
+              color: Math.random() < 0.5 ? "#44dd44" : "#22aa22", size: 3,
+            });
+          }
+          s.toxicProjectiles.splice(i, 1);
         }
       }
 
@@ -2716,6 +2921,153 @@ export function ZombieGame() {
           ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
           ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
           ctx.fill();
+        } else if (z.type === "fireMiniboss") {
+          // fire miniboss: large intense aura
+          const fpulse = 0.6 + Math.sin(now * 10) * 0.4;
+          const fgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 3.0);
+          fgrd.addColorStop(0, `rgba(255,80,0,${0.5 * fpulse})`);
+          fgrd.addColorStop(0.4, `rgba(255,40,0,${0.25 * fpulse})`);
+          fgrd.addColorStop(1, "rgba(200,20,0,0)");
+          ctx.fillStyle = fgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 3.0, 0, Math.PI * 2); ctx.fill();
+          // body (darker, larger)
+          ctx.fillStyle = "#3a0a02";
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // inner fire core
+          const igrd = ctx.createRadialGradient(sx, cy, 0, sx, cy, z.radius * 0.7);
+          igrd.addColorStop(0, `rgba(255,120,20,${0.4 * fpulse})`);
+          igrd.addColorStop(1, "rgba(200,40,0,0)");
+          ctx.fillStyle = igrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 0.7, 0, Math.PI * 2); ctx.fill();
+          // flame crown (8 larger flames)
+          for (let fi = 0; fi < 8; fi++) {
+            const fa = (fi / 8) * Math.PI * 2 + now * 4;
+            const fr = z.radius * 0.6 + Math.sin(now * 12 + fi) * 4;
+            const fx = sx + Math.cos(fa) * fr * 0.6;
+            const fy = cy - z.radius * 0.7 + Math.sin(now * 10 + fi * 2) * 5;
+            ctx.fillStyle = fi % 2 === 0 ? `rgba(255,160,30,${0.7 + fpulse * 0.2})` : `rgba(255,60,10,${0.6 + fpulse * 0.2})`;
+            ctx.beginPath();
+            ctx.moveTo(fx - 4, fy + 5);
+            ctx.quadraticCurveTo(fx, fy - 12 + Math.sin(now * 14 + fi) * 4, fx + 4, fy + 5);
+            ctx.closePath(); ctx.fill();
+          }
+          // outline (thick, bright orange)
+          ctx.strokeStyle = "#ff4400";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // secondary outline pulse
+          ctx.strokeStyle = `rgba(255,100,0,${0.3 + fpulse * 0.3})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2);
+          ctx.stroke();
+          // eye glow (intense red-orange)
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 5, perpY = Math.cos(ang) * 5;
+          const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 14);
+          eglow.addColorStop(0, "rgba(255,100,20,0.9)");
+          eglow.addColorStop(1, "rgba(255,40,0,0)");
+          ctx.fillStyle = eglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 14, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#ff6600";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 3, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 3, 0, Math.PI * 2);
+          ctx.fill();
+          // health bar above miniboss
+          const barW = z.radius * 2.4;
+          const barH = 5;
+          const barX = sx - barW / 2;
+          const barY = sy - z.radius - 16;
+          ctx.fillStyle = "rgba(0,0,0,0.7)";
+          ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+          ctx.fillStyle = "#4a0a0a";
+          ctx.fillRect(barX, barY, barW, barH);
+          ctx.fillStyle = "#ff3300";
+          ctx.fillRect(barX, barY, barW * (z.hp / z.maxHp), barH);
+          ctx.fillStyle = "#ffcc00";
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("MINIBOSS", sx, barY - 4);
+        } else if (z.type === "toxicMiniboss") {
+          // toxic miniboss: large green toxic aura
+          const tpulse = 0.6 + Math.sin(now * 9) * 0.4;
+          const tgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 3.0);
+          tgrd.addColorStop(0, `rgba(40,220,40,${0.45 * tpulse})`);
+          tgrd.addColorStop(0.4, `rgba(20,160,20,${0.2 * tpulse})`);
+          tgrd.addColorStop(1, "rgba(10,100,10,0)");
+          ctx.fillStyle = tgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 3.0, 0, Math.PI * 2); ctx.fill();
+          // body (dark toxic green)
+          ctx.fillStyle = "#0a3a0a";
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // inner toxic core
+          const igrd = ctx.createRadialGradient(sx, cy, 0, sx, cy, z.radius * 0.7);
+          igrd.addColorStop(0, `rgba(60,200,60,${0.35 * tpulse})`);
+          igrd.addColorStop(1, "rgba(20,120,20,0)");
+          ctx.fillStyle = igrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 0.7, 0, Math.PI * 2); ctx.fill();
+          // toxic bubbling spots (larger, more)
+          for (let bi = 0; bi < 6; bi++) {
+            const ba = (bi / 6) * Math.PI * 2 + now * 2.5;
+            const br = z.radius * 0.5 + Math.sin(now * 7 + bi) * 3;
+            const bx = sx + Math.cos(ba) * br;
+            const by = cy + Math.sin(ba) * br;
+            ctx.fillStyle = `rgba(100,255,100,${0.5 + tpulse * 0.2})`;
+            ctx.beginPath();
+            ctx.arc(bx, by, 3 + Math.sin(now * 10 + bi) * 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          // outline (thick, bright green)
+          ctx.strokeStyle = "#33cc33";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // secondary outline pulse
+          ctx.strokeStyle = `rgba(50,200,50,${0.3 + tpulse * 0.3})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2);
+          ctx.stroke();
+          // toxic eyes (bright green)
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 5, perpY = Math.cos(ang) * 5;
+          const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 14);
+          eglow.addColorStop(0, "rgba(80,255,80,0.9)");
+          eglow.addColorStop(1, "rgba(30,160,30,0)");
+          ctx.fillStyle = eglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 14, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#66ff66";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 3, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 3, 0, Math.PI * 2);
+          ctx.fill();
+          // health bar above miniboss
+          const barW = z.radius * 2.4;
+          const barH = 5;
+          const barX = sx - barW / 2;
+          const barY = sy - z.radius - 16;
+          ctx.fillStyle = "rgba(0,0,0,0.7)";
+          ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+          ctx.fillStyle = "#0a3a0a";
+          ctx.fillRect(barX, barY, barW, barH);
+          ctx.fillStyle = "#33cc33";
+          ctx.fillRect(barX, barY, barW * (z.hp / z.maxHp), barH);
+          ctx.fillStyle = "#88ff88";
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("TOXIC MINIBOSS", sx, barY - 4);
         } else if (z.type === "toxic") {
           // toxic zombie aura
           const tpulse = 0.5 + Math.sin(now * 7) * 0.3;
@@ -2798,7 +3150,7 @@ export function ZombieGame() {
         if (z.hp < z.maxHp) {
           ctx.fillStyle = "#000";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
-          ctx.fillStyle = z.type === "fire" ? "#ff6600" : z.type === "toxic" ? "#33cc33" : "#c93030";
+          ctx.fillStyle = z.type === "fire" || z.type === "fireMiniboss" ? "#ff6600" : z.type === "toxic" || z.type === "toxicMiniboss" ? "#33cc33" : "#c93030";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
         }
       }
@@ -2831,6 +3183,29 @@ export function ZombieGame() {
           ctx.arc(px, py, 4 + Math.sin(now * 7 + i) * 2, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+    }
+
+    function drawToxicProjectiles() {
+      const now = performance.now() / 1000;
+      for (const p of s.toxicProjectiles) {
+        const sx = p.x - s.camera.x, sy = p.y - s.camera.y;
+        if (sx < -30 || sy < -30 || sx > canvas.width + 30 || sy > canvas.height + 30) continue;
+        // green glowing orb
+        const pulse = 0.7 + Math.sin(now * 10) * 0.3;
+        const grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, 10);
+        grd.addColorStop(0, `rgba(80,255,80,${pulse})`);
+        grd.addColorStop(0.5, `rgba(40,180,40,${pulse * 0.6})`);
+        grd.addColorStop(1, "rgba(20,120,20,0)");
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+        ctx.fill();
+        // solid core
+        ctx.fillStyle = `rgba(60,220,60,${pulse})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
@@ -3131,6 +3506,7 @@ export function ZombieGame() {
       drawTorches();
       drawParticles();
       drawToxicGas();
+      drawToxicProjectiles();
       drawZombies();
       drawBoss();
       drawBossBullets();
