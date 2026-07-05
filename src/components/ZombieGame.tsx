@@ -2843,7 +2843,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
       {/* Movement joystick — bottom-left, hugs the corner so it fits in landscape */}
       <div
         ref={moveRef}
-        className={`${joyBase} left-4 bottom-4 sm:left-6 sm:bottom-24`}
+        className={`${joyBase} left-4 bottom-4 [@media(orientation:portrait)]:bottom-[100px] sm:left-6 sm:bottom-24`}
       >
         <div
           className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c9a24a]/80 border border-black/40"
@@ -2854,7 +2854,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
       {/* Aim + fire joystick — bottom-right */}
       <div
         ref={aimRef}
-        className={`${joyBase} right-4 bottom-4 sm:right-6 sm:bottom-24`}
+        className={`${joyBase} right-4 bottom-4 [@media(orientation:portrait)]:bottom-[100px] sm:right-6 sm:bottom-24`}
       >
         <div
           className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c93030]/80 border border-black/40"
@@ -2870,8 +2870,8 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
           so they never overflow the top of the screen. */}
       <div
         className="absolute right-36 bottom-6 flex-row gap-2 pointer-events-auto flex
-                   [@media(min-height:500px)]:right-6 [@media(min-height:500px)]:bottom-[260px]
-                   [@media(min-height:500px)]:flex-col [@media(min-height:500px)]:gap-3"
+                   [@media(orientation:landscape)]:left-1/2 [@media(orientation:landscape)]:right-auto
+                   [@media(orientation:landscape)]:-translate-x-1/2 [@media(orientation:landscape)]:bottom-[100px]"
       >
         <button
           onPointerDown={(e) => {
