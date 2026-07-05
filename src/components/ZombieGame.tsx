@@ -2560,7 +2560,7 @@ export function ZombieGame() {
           <div
             className={
               isMobile
-                ? "absolute left-1/2 -translate-x-1/2 top-14 font-mono pointer-events-none"
+                ? "absolute left-1/2 -translate-x-1/2 top-16 font-mono pointer-events-none"
                 : "absolute left-4 bottom-4 font-mono pointer-events-none"
             }
           >
