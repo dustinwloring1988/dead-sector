@@ -2621,8 +2621,6 @@ export function ZombieGame() {
                 <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
                 <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
                 <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
-                <div><span className="text-[#c9a24a] font-bold">CAVE DOOR</span> — Open it for 1500 points</div>
-                <div><span className="text-[#c9a24a] font-bold">STAY CLOSE</span> — Power the cave generator for 20 seconds</div>
                 <div className="pt-2 text-[#8a8a6a] text-xs">
                   Kill zombies to earn points. Spend points at the yellow buy stations to unlock stronger weapons.
                   Green boxes refill ammo. Find the cave at the bottom of the map and bring the power online.
