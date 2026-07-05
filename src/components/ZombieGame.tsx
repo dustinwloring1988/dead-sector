@@ -7,7 +7,8 @@ import { useIsMobile } from "@/hooks/use-mobile";
 type Vec = { x: number; y: number };
 
 type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
-type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" };
+type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" | "toxic" };
+type ToxicGas = Vec & { radius: number; life: number; maxLife: number };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
 type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door" | "golfDoor"; hp?: number };
@@ -257,6 +258,10 @@ const soundEngine = (() => {
     obstacleHit() {
       playNoise(0.04, 0.12, 3000);
       playTone("square", 300, 0.03, 0.08);
+    },
+    toxicDeath() {
+      playTone("sawtooth", 200, 0.25, 0.2, undefined, 100);
+      playNoise(0.2, 0.15, 1200);
     },
   };
 
@@ -604,6 +609,9 @@ export function ZombieGame() {
     ] as { x: number; y: number }[],
     golfCompleted: false,
     golfDoorOpened: false,
+    toxicGas: [] as ToxicGas[],
+    toxicZombieSpawned: false,
+    lastToxicDmg: 0,
   });
 
   useEffect(() => {
@@ -1195,6 +1203,13 @@ export function ZombieGame() {
           soundEngine.buyWeapon();
           setMessage("CAVE DOOR OPENED", 2200);
           syncWeaponUi();
+          // spawn toxic zombie by the generator
+          if (!s.toxicZombieSpawned) {
+            const hp = 30 + s.round * 15;
+            s.zombies.push({ x: GENERATOR_POS.x - 60, y: GENERATOR_POS.y, hp, maxHp: hp, speed: 45 + s.round * 3, radius: 18, type: "toxic" });
+            s.zombiesAlive++;
+            s.toxicZombieSpawned = true;
+          }
           return;
         }
       }
@@ -1466,7 +1481,7 @@ export function ZombieGame() {
     function killZombie(z: Zombie, headshot = false) {
       s.zombiesAlive--;
       if (z.type === "fire") s.fireZombieAlive = false;
-      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : 60) + (headshot ? 30 : 0);
+      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : 60) + (headshot ? 30 : 0);
       s.points += pts;
       soundEngine.zombieDeath();
       // fire zombie: check if near unlit torch
@@ -1513,6 +1528,24 @@ export function ZombieGame() {
           });
         }
         s.decals.push({ x: z.x, y: z.y, r: z.radius * 1.6, color: "#4a2008", alpha: 0.55, kind: "scorch" });
+        if (s.decals.length > 120) s.decals.shift();
+      } else if (z.type === "toxic") {
+        // toxic zombie: spawn gas cloud
+        s.toxicGas.push({ x: z.x, y: z.y, radius: 60, life: 4, maxLife: 4 });
+        setMessage("TOXIC GAS!", 1500);
+        soundEngine.toxicDeath();
+        // green gas particles
+        for (let i = 0; i < 25; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 30 + Math.random() * 80;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.8 + Math.random() * 0.6, maxLife: 1.4,
+            color: Math.random() < 0.5 ? "#33cc33" : Math.random() < 0.7 ? "#22aa22" : "#44dd44",
+            size: 5 + Math.random() * 6,
+          });
+        }
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * 1.8, color: "#0a3a0a", alpha: 0.5, kind: "scorch" });
         if (s.decals.length > 120) s.decals.shift();
       } else {
         // normal zombie: blood decal
@@ -2094,6 +2127,33 @@ export function ZombieGame() {
         }
       }
 
+      // toxic gas update and damage
+      for (let i = s.toxicGas.length - 1; i >= 0; i--) {
+        const g = s.toxicGas[i];
+        g.life -= dt;
+        if (g.life <= 0) {
+          s.toxicGas.splice(i, 1);
+          continue;
+        }
+        // damage player if inside gas
+        const gdx = s.player.x - g.x, gdy = s.player.y - g.y;
+        if (gdx * gdx + gdy * gdy < g.radius * g.radius) {
+          const now = performance.now();
+          if (now - s.lastToxicDmg > 500) {
+            s.lastToxicDmg = now;
+            soundEngine.lavaBurn();
+            s.player.hp -= 5;
+            s.hitFlash = Math.max(s.hitFlash, 0.4);
+            if (s.player.hp <= 0) {
+              s.player.hp = 0; s.gameOver = true;
+              setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+            } else {
+              setUiState((u) => ({ ...u, hp: s.player.hp }));
+            }
+          }
+        }
+      }
+
       // transition flash decay
       if (s.transitionFlash > 0) s.transitionFlash = Math.max(0, s.transitionFlash - dt * 0.6);
 
@@ -2628,6 +2688,52 @@ export function ZombieGame() {
           ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
           ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
           ctx.fill();
+        } else if (z.type === "toxic") {
+          // toxic zombie aura
+          const tpulse = 0.5 + Math.sin(now * 7) * 0.3;
+          const tgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 2.5);
+          tgrd.addColorStop(0, `rgba(50,200,50,${0.3 * tpulse})`);
+          tgrd.addColorStop(0.5, `rgba(30,160,30,${0.12 * tpulse})`);
+          tgrd.addColorStop(1, "rgba(20,120,20,0)");
+          ctx.fillStyle = tgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.5, 0, Math.PI * 2); ctx.fill();
+          // body
+          ctx.fillStyle = "#1a4a1a";
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // toxic bubbling spots
+          for (let bi = 0; bi < 4; bi++) {
+            const ba = (bi / 4) * Math.PI * 2 + now * 2;
+            const br = z.radius * 0.4 + Math.sin(now * 6 + bi) * 2;
+            const bx = sx + Math.cos(ba) * br;
+            const by = cy + Math.sin(ba) * br;
+            ctx.fillStyle = `rgba(100,255,100,${0.4 + tpulse * 0.2})`;
+            ctx.beginPath();
+            ctx.arc(bx, by, 2 + Math.sin(now * 9 + bi) * 1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          // outline
+          ctx.strokeStyle = "#33cc33";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // toxic eyes (green)
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+          const tglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 10);
+          tglow.addColorStop(0, "rgba(100,255,100,0.8)");
+          tglow.addColorStop(1, "rgba(50,200,50,0)");
+          ctx.fillStyle = tglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 10, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#66ff66";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
+          ctx.fill();
         } else {
           const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
           ctx.fillStyle = color;
@@ -2664,8 +2770,38 @@ export function ZombieGame() {
         if (z.hp < z.maxHp) {
           ctx.fillStyle = "#000";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
-          ctx.fillStyle = z.type === "fire" ? "#ff6600" : "#c93030";
+          ctx.fillStyle = z.type === "fire" ? "#ff6600" : z.type === "toxic" ? "#33cc33" : "#c93030";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
+        }
+      }
+    }
+
+    function drawToxicGas() {
+      const now = performance.now() / 1000;
+      for (const g of s.toxicGas) {
+        const sx = g.x - s.camera.x, sy = g.y - s.camera.y;
+        if (sx < -100 || sy < -100 || sx > canvas.width + 100 || sy > canvas.height + 100) continue;
+        const alpha = (g.life / g.maxLife) * 0.45;
+        const pulse = 0.8 + Math.sin(now * 5) * 0.2;
+        // outer glow
+        const grd = ctx.createRadialGradient(sx, sy, g.radius * 0.2, sx, sy, g.radius);
+        grd.addColorStop(0, `rgba(50,200,50,${alpha * pulse})`);
+        grd.addColorStop(0.4, `rgba(30,160,30,${alpha * pulse * 0.6})`);
+        grd.addColorStop(1, "rgba(20,120,20,0)");
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(sx, sy, g.radius, 0, Math.PI * 2);
+        ctx.fill();
+        // inner swirl particles
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2 + now * 1.5;
+          const r = g.radius * 0.35 + Math.sin(now * 4 + i * 2) * g.radius * 0.15;
+          const px = sx + Math.cos(a) * r;
+          const py = sy + Math.sin(a) * r;
+          ctx.fillStyle = `rgba(100,255,100,${alpha * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(px, py, 4 + Math.sin(now * 7 + i) * 2, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     }
@@ -2966,6 +3102,7 @@ export function ZombieGame() {
       drawTotems();
       drawTorches();
       drawParticles();
+      drawToxicGas();
       drawZombies();
       drawBoss();
       drawBossBullets();
