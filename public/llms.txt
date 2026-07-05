@@ -1,0 +1,9 @@
+# Dead Sector
+
+> Round-based top-down zombie survival shooter. Fight endless waves of the undead, earn points, and upgrade your arsenal.
+
+Dead Sector is a browser-based top-down shooter inspired by Black Ops Zombies. Survive wave after wave, buy weapons, and hold the line. Playable on desktop and mobile with touch controls and haptics.
+
+## Pages
+
+- [Play Dead Sector](/): Launch the game and start surviving waves.
