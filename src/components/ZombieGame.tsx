@@ -7,7 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 type Vec = { x: number; y: number };
 
 type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
-type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" };
+type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
 type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door" | "golfDoor"; hp?: number };
@@ -51,6 +51,11 @@ const FLASHLIGHT_LENGTH = 430;
 const GOLF_ROOM_RECT = { x: 0, y: 0, w: MAP_W, h: 450 };
 const GOLF_ENTRY = { x: 900, w: 200 };
 const GOLF_DOOR_COST = 1000;
+const TORCH_POSITIONS = [
+  { x: 400, y: 1000 },
+  { x: 1600, y: 1000 },
+];
+const TORCH_LIGHT_RADIUS = 180;
 
 // ─── 8-bit Sound Engine (Web Audio API, no files) ───────────────────────────
 type MusicMode = "menu" | "main" | "boss" | null;
@@ -199,6 +204,20 @@ const soundEngine = (() => {
         osc.connect(g); g.connect(d);
         osc.start(t); osc.stop(t + 0.5);
       }
+    },
+    torchLight() {
+      const { ctx: c, sfx: d } = ensure();
+      const t = c.currentTime;
+      const osc = c.createOscillator();
+      const g = c.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(120, t);
+      osc.frequency.linearRampToValueAtTime(800, t + 0.15);
+      osc.frequency.linearRampToValueAtTime(400, t + 0.4);
+      g.gain.setValueAtTime(0.25, t);
+      g.gain.linearRampToValueAtTime(0, t + 0.5);
+      osc.connect(g); g.connect(d);
+      osc.start(t); osc.stop(t + 0.5);
     },
     bossEnrage() {
       playTone("sawtooth", 80, 0.6, 0.3);
@@ -546,7 +565,10 @@ export function ZombieGame() {
     ],
     obstacles: [] as Obstacle[],
     totems: [] as { x: number; y: number; kills: number; need: number; active: boolean; id: string }[],
-    totemPhase: 0 as 0 | 1 | 2 | 3 | 4 | 5, // 0=corners, 1=generator, 2=cave totem, 3=center, 4=transitioning, 5=boss
+    totemPhase: 0 as 0 | 1 | 2 | 3 | 4 | 5, // 0=torches, 1=generator, 2=cave totem, 3=center, 4=transitioning, 5=boss
+    torches: [] as { x: number; y: number; lit: boolean }[],
+    fireZombieToSpawn: false as boolean,
+    fireZombieAlive: false as boolean,
     transitionFlash: 0,
     bossMode: false,
     boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number },
@@ -673,14 +695,8 @@ export function ZombieGame() {
       }
     }
 
-    if (s.totems.length === 0) {
-      const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
-      s.totems = [
-        { x: cx - 720, y: cy - 720, kills: 0, need: 10, active: true, id: "NW" },
-        { x: cx + 720, y: cy - 720, kills: 0, need: 10, active: true, id: "NE" },
-        { x: cx - 720, y: cy + 720, kills: 0, need: 10, active: true, id: "SW" },
-        { x: cx + 720, y: cy + 720, kills: 0, need: 10, active: true, id: "SE" },
-      ];
+    if (s.torches.length === 0) {
+      s.torches = TORCH_POSITIONS.map((p) => ({ x: p.x, y: p.y, lit: false }));
     }
 
     // Collision helpers
@@ -1118,6 +1134,9 @@ export function ZombieGame() {
       setMessage(`ROUND ${r}`, 2200);
       soundEngine.roundStart();
       setUiState((u) => ({ ...u, round: r, zombiesLeft: count }));
+      if (!s.torches.every((t) => t.lit)) {
+        s.fireZombieToSpawn = true;
+      }
     }
 
     function beginGame() {
@@ -1287,6 +1306,32 @@ export function ZombieGame() {
       s.zombiesAlive++;
     }
 
+    function spawnFireZombie() {
+      let cx = s.player.x;
+      let cy = s.player.y;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 700;
+        const x = s.player.x + Math.cos(angle) * dist;
+        const y = s.player.y + Math.sin(angle) * dist;
+        cx = Math.max(50, Math.min(MAP_W - 50, x));
+        cy = Math.max(50, Math.min(MAP_H - 50, y));
+        if (!isInCave(cx, cy)) break;
+      }
+      if (isInCave(cx, cy)) {
+        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
+      }
+      if (cx >= GOLF_ROOM_RECT.x && cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w && cy >= GOLF_ROOM_RECT.y && cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h) {
+        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
+      }
+      const hp = 30 + s.round * 15;
+      const speed = 50 + s.round * 3;
+      const radius = 16;
+      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "fire" });
+      s.zombiesAlive++;
+      s.fireZombieAlive = true;
+    }
+
     function shoot() {
       const key = s.currentWeaponKey;
       const w = WEAPONS[key];
@@ -1420,27 +1465,75 @@ export function ZombieGame() {
 
     function killZombie(z: Zombie, headshot = false) {
       s.zombiesAlive--;
-      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : 60) + (headshot ? 30 : 0);
+      if (z.type === "fire") s.fireZombieAlive = false;
+      const pts = (z.type === "brute" ? 200 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : 60) + (headshot ? 30 : 0);
       s.points += pts;
       soundEngine.zombieDeath();
-      // blood decal
-      s.decals.push({ x: z.x, y: z.y, r: z.radius * (1.4 + Math.random() * 0.6), color: "#4a0808", alpha: 0.55, kind: "blood" });
-      if (s.decals.length > 120) s.decals.shift();
-      // particles
-      for (let i = 0; i < 18; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const sp = 60 + Math.random() * 180;
-        s.particles.push({
-          x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: 0.6 + Math.random() * 0.3, maxLife: 0.9,
-          color: Math.random() < 0.6 ? "#7a0d0d" : "#3a0808", size: 3 + Math.random() * 3,
-        });
+      // fire zombie: check if near unlit torch
+      if (z.type === "fire") {
+        for (const torch of s.torches) {
+          if (torch.lit) continue;
+          const dx = torch.x - z.x, dy = torch.y - z.y;
+          if (dx * dx + dy * dy < TORCH_LIGHT_RADIUS * TORCH_LIGHT_RADIUS) {
+            torch.lit = true;
+            soundEngine.torchLight();
+            setMessage("TORCH LIT!", 2200);
+            // fire particles
+            for (let i = 0; i < 25; i++) {
+              const a = Math.random() * Math.PI * 2;
+              const sp = 40 + Math.random() * 160;
+              s.particles.push({
+                x: torch.x, y: torch.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+                color: Math.random() < 0.4 ? "#ff6600" : Math.random() < 0.6 ? "#ffaa00" : "#ff3300",
+                size: 3 + Math.random() * 4,
+              });
+            }
+            // check if all torches lit → advance totem phase
+            if (s.totemPhase === 0 && s.torches.every((t) => t.lit)) {
+              if (s.generator.active) {
+                s.totemPhase = 2;
+                setMessage("THE CAVE AWAKENS...", 2600);
+              } else {
+                s.totemPhase = 1;
+                setMessage("THE CAVE REQUIRES POWER...", 2600);
+              }
+            }
+            break;
+          }
+        }
+        // fire zombie death particles (fire themed)
+        for (let i = 0; i < 20; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 200;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.5 + Math.random() * 0.4, maxLife: 0.9,
+            color: Math.random() < 0.5 ? "#ff6600" : "#ffaa00", size: 3 + Math.random() * 4,
+          });
+        }
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * 1.6, color: "#4a2008", alpha: 0.55, kind: "scorch" });
+        if (s.decals.length > 120) s.decals.shift();
+      } else {
+        // normal zombie: blood decal
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * (1.4 + Math.random() * 0.6), color: "#4a0808", alpha: 0.55, kind: "blood" });
+        if (s.decals.length > 120) s.decals.shift();
+        // particles
+        for (let i = 0; i < 18; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 180;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.6 + Math.random() * 0.3, maxLife: 0.9,
+            color: Math.random() < 0.6 ? "#7a0d0d" : "#3a0808", size: 3 + Math.random() * 3,
+          });
+        }
       }
       // random pickup
       if (Math.random() < 0.06) {
         s.pickups.push({ x: z.x, y: z.y, kind: Math.random() < 0.5 ? "ammo" : "health", life: 15 });
       }
-      // easter egg: totem progression
+      // easter egg: totem progression (cave totem / core totem only)
       for (const t of s.totems) {
         if (!t.active) continue;
         const dx = t.x - z.x, dy = t.y - z.y;
@@ -1450,16 +1543,7 @@ export function ZombieGame() {
             t.active = false;
             soundEngine.totemAwaken();
             setMessage(`TOTEM ${t.id} AWAKENED`);
-            if (s.totemPhase === 0 && s.totems.every((tt) => !tt.active)) {
-              if (s.totems.some((tt) => tt.id === "CAVE")) {
-                s.totemPhase = 2;
-              } else if (s.generator.active) {
-                s.totemPhase = 2;
-              } else {
-                s.totemPhase = 1;
-                setMessage("THE CAVE REQUIRES POWER...", 2600);
-              }
-            } else if (s.totemPhase === 2 && t.id === "CAVE") {
+            if (s.totemPhase === 2 && t.id === "CAVE") {
               s.totemPhase = 3;
               s.totems.push({ x: MAP_W / 2, y: SURFACE_CENTER_Y, kills: 0, need: 25, active: true, id: "CORE" });
               setMessage("THE CORE CALLS...", 2600);
@@ -1508,6 +1592,9 @@ export function ZombieGame() {
         { x: cx + 250, y: cy + 60, w: 110, h: 130 },
       ];
       s.totems = [];
+      s.torches = [];
+      s.fireZombieAlive = false;
+      s.fireZombieToSpawn = false;
       s.player.x = cx;
       s.player.y = cy + half - 60;
       s.player.hp = Math.min(s.player.maxHp, s.player.hp + 40);
@@ -1575,6 +1662,9 @@ export function ZombieGame() {
             if (!s.totems.some((tt) => tt.id === "CAVE")) {
               s.totems.push({ x: CAVE_TOTEM_POS.x, y: CAVE_TOTEM_POS.y, kills: 0, need: 15, active: true, id: "CAVE" });
               setMessage("A TOTEM AWAKENS IN THE DEPTHS...", 2600);
+            }
+            if (s.totemPhase === 1) {
+              s.totemPhase = 2;
             }
           }
         } else {
@@ -1808,6 +1898,11 @@ export function ZombieGame() {
           s.zombiesToSpawn--;
           s.spawnCooldown = Math.max(200, 800 - s.round * 40);
         }
+      }
+      // fire zombie spawn
+      if (s.fireZombieToSpawn && !s.fireZombieAlive && !s.bossMode && s.totemPhase < 4) {
+        spawnFireZombie();
+        s.fireZombieToSpawn = false;
       }
       if (!s.bossMode && s.totemPhase < 4 && s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
         setTimeout(() => startRound(s.round + 1), 3000);
@@ -2486,41 +2581,90 @@ export function ZombieGame() {
         ctx.fill();
         const bob = Math.sin(now * 5 + (z.x + z.y) * 0.01) * 1.5;
         const cy = sy + bob;
-        const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-        ctx.fill();
-        // torn flesh highlight
-        ctx.fillStyle = "rgba(120,20,20,0.35)";
-        ctx.beginPath();
-        ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#7a0d0d";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-        ctx.stroke();
-        // eye glow
-        const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
-        const ex = Math.cos(ang) * (z.radius * 0.4);
-        const ey = Math.sin(ang) * (z.radius * 0.4);
-        const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
-        const glow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
-        glow.addColorStop(0, "rgba(255,60,60,0.6)");
-        glow.addColorStop(1, "rgba(255,60,60,0)");
-        ctx.fillStyle = glow;
-        ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#ff3030";
-        ctx.beginPath();
-        ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
-        ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
-        ctx.fill();
+        if (z.type === "fire") {
+          // fire zombie aura
+          const fpulse = 0.5 + Math.sin(now * 8) * 0.3;
+          const fgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 2.5);
+          fgrd.addColorStop(0, `rgba(255,120,20,${0.35 * fpulse})`);
+          fgrd.addColorStop(0.5, `rgba(255,60,0,${0.15 * fpulse})`);
+          fgrd.addColorStop(1, "rgba(200,30,0,0)");
+          ctx.fillStyle = fgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.5, 0, Math.PI * 2); ctx.fill();
+          // body
+          ctx.fillStyle = "#5a1a0a";
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // flame crown
+          for (let fi = 0; fi < 5; fi++) {
+            const fa = (fi / 5) * Math.PI * 2 + now * 3;
+            const fr = z.radius * 0.5 + Math.sin(now * 10 + fi) * 3;
+            const fx = sx + Math.cos(fa) * fr * 0.6;
+            const fy = cy - z.radius * 0.6 + Math.sin(now * 8 + fi * 2) * 4;
+            ctx.fillStyle = fi % 2 === 0 ? `rgba(255,180,40,${0.6 + fpulse * 0.3})` : `rgba(255,100,20,${0.5 + fpulse * 0.2})`;
+            ctx.beginPath();
+            ctx.moveTo(fx - 3, fy + 4);
+            ctx.quadraticCurveTo(fx, fy - 8 + Math.sin(now * 12 + fi) * 3, fx + 3, fy + 4);
+            ctx.closePath(); ctx.fill();
+          }
+          // outline
+          ctx.strokeStyle = "#ff6600";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // eye glow (fire themed)
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+          const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 10);
+          eglow.addColorStop(0, "rgba(255,200,40,0.8)");
+          eglow.addColorStop(1, "rgba(255,100,0,0)");
+          ctx.fillStyle = eglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 10, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#ffcc00";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // torn flesh highlight
+          ctx.fillStyle = "rgba(120,20,20,0.35)";
+          ctx.beginPath();
+          ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#7a0d0d";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // eye glow
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+          const glow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+          glow.addColorStop(0, "rgba(255,60,60,0.6)");
+          glow.addColorStop(1, "rgba(255,60,60,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#ff3030";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
         // hp bar
         if (z.hp < z.maxHp) {
           ctx.fillStyle = "#000";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
-          ctx.fillStyle = "#c93030";
+          ctx.fillStyle = z.type === "fire" ? "#ff6600" : "#c93030";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
         }
       }
@@ -2632,6 +2776,67 @@ export function ZombieGame() {
         ctx.fillStyle = "#e0c0ff";
         ctx.font = "bold 12px monospace"; ctx.textAlign = "center";
         ctx.fillText(`${t.kills}/${t.need}`, sx, sy - 74);
+      }
+    }
+
+    function drawTorches() {
+      const now = performance.now();
+      for (const torch of s.torches) {
+        const sx = torch.x - s.camera.x, sy = torch.y - s.camera.y;
+        if (sx < -60 || sy < -100 || sx > canvas.width + 60 || sy > canvas.height + 100) continue;
+        // base circle on ground
+        ctx.fillStyle = torch.lit ? "rgba(255,160,40,0.12)" : "rgba(100,80,60,0.08)";
+        ctx.beginPath(); ctx.arc(sx, sy + 6, 20, 0, Math.PI * 2); ctx.fill();
+        // wooden post
+        ctx.fillStyle = torch.lit ? "#5a3a1a" : "#3a2a1a";
+        ctx.fillRect(sx - 4, sy - 48, 8, 54);
+        ctx.strokeStyle = torch.lit ? "#3a2010" : "#1a1008";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx - 4, sy - 48, 8, 54);
+        // cross bar
+        ctx.fillStyle = torch.lit ? "#4a2a12" : "#2a1a0a";
+        ctx.fillRect(sx - 10, sy - 48, 20, 6);
+        // wick / flame
+        if (torch.lit) {
+          const pulse = 0.7 + Math.sin(now / 100) * 0.3;
+          const flicker = Math.sin(now / 60) * 2;
+          // flame glow
+          const glow = ctx.createRadialGradient(sx + flicker, sy - 58, 0, sx, sy - 50, 40);
+          glow.addColorStop(0, `rgba(255,200,60,${0.4 * pulse})`);
+          glow.addColorStop(0.5, `rgba(255,120,20,${0.2 * pulse})`);
+          glow.addColorStop(1, "rgba(255,60,0,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(sx, sy - 50, 40, 0, Math.PI * 2); ctx.fill();
+          // flame body
+          ctx.fillStyle = `rgba(255,180,40,${pulse})`;
+          ctx.beginPath();
+          ctx.moveTo(sx - 6, sy - 42);
+          ctx.quadraticCurveTo(sx - 3 + flicker, sy - 62, sx, sy - 68 + flicker);
+          ctx.quadraticCurveTo(sx + 3 - flicker, sy - 62, sx + 6, sy - 42);
+          ctx.closePath(); ctx.fill();
+          // inner flame
+          ctx.fillStyle = `rgba(255,240,120,${pulse * 0.8})`;
+          ctx.beginPath();
+          ctx.moveTo(sx - 3, sy - 42);
+          ctx.quadraticCurveTo(sx + flicker * 0.5, sy - 56, sx, sy - 62 + flicker);
+          ctx.quadraticCurveTo(sx - flicker * 0.5, sy - 56, sx + 3, sy - 42);
+          ctx.closePath(); ctx.fill();
+        } else {
+          // unlit wick
+          ctx.fillStyle = "#2a1a0a";
+          ctx.fillRect(sx - 1.5, sy - 52, 3, 10);
+          // label indicator (pulsing ring to show where to kill fire zombie)
+          const pulse = 0.3 + Math.sin(now / 400) * 0.15;
+          ctx.strokeStyle = `rgba(255,100,40,${pulse})`;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath(); ctx.arc(sx, sy, TORCH_LIGHT_RADIUS, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          // label
+          ctx.fillStyle = `rgba(255,140,60,${pulse + 0.3})`;
+          ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
+          ctx.fillText("KILL FIRE ZOMBIE HERE", sx, sy + TORCH_LIGHT_RADIUS + 14);
+        }
       }
     }
 
@@ -2759,6 +2964,7 @@ export function ZombieGame() {
       drawObstacles();
       drawGenerator();
       drawTotems();
+      drawTorches();
       drawParticles();
       drawZombies();
       drawBoss();
