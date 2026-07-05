@@ -1416,7 +1416,10 @@ export function ZombieGame() {
         s.player.hp = 0;
         s.gameOver = true;
         soundEngine.setMusic("menu");
+        haptic([80, 60, 120, 60, 200]);
         setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+      } else {
+        haptic([30, 20, 40]);
       }
       setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
     }
