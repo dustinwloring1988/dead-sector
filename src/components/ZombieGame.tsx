@@ -1167,6 +1167,14 @@ export function ZombieGame() {
 
     startGameRef.current = beginGame;
 
+    function haptic(pattern: number | number[]) {
+      try {
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate(pattern);
+        }
+      } catch { /* ignore */ }
+    }
+
     function tryReload() {
       const key = s.currentWeaponKey;
       const w = WEAPONS[key];
