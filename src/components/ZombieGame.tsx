@@ -1183,6 +1183,7 @@ export function ZombieGame() {
       if (performance.now() < s.reloadingUntil) return;
       s.reloadingUntil = performance.now() + w.reloadMs;
       soundEngine.reload();
+      haptic([15, 40, 25]);
       setUiState((u) => ({ ...u, reloading: true }));
     }
 
