@@ -10,7 +10,7 @@ type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
 type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
-type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall"; hp?: number };
+type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door"; hp?: number };
 type CaveGenerator = Vec & { active: boolean; progressMs: number };
 
 type Weapon = {
@@ -36,10 +36,12 @@ const WEAPONS: Record<string, Weapon> = {
 };
 
 const MAP_W = 2000;
-const MAP_H = 2000;
+const MAP_H = 2600;
+const SURFACE_CENTER_Y = 1000;
 const BOSS_ARENA_SIZE = 1000;
-const CAVE_RECT = { x: 620, y: 1425, w: 760, h: 535 };
+const CAVE_RECT = { x: 0, y: 2000, w: MAP_W, h: 600 };
 const CAVE_ENTRY = { x: 900, w: 200 };
+const CAVE_DOOR_COST = 1500;
 const GENERATOR_POS = { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 120 };
 const GENERATOR_INTERACT_DISTANCE = 80;
 const GENERATOR_HOLD_MS = 20000;
@@ -508,7 +510,7 @@ export function ZombieGame() {
   const isMobile = isMobileWidth || isCoarsePointer;
 
   const stateRef = useRef({
-    player: { x: MAP_W / 2, y: MAP_H / 2, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
+    player: { x: MAP_W / 2, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
     keys: {} as Record<string, boolean>,
     mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
     bullets: [] as Bullet[],
@@ -530,14 +532,14 @@ export function ZombieGame() {
     hitFlash: 0,
     camera: { x: 0, y: 0, shake: 0 },
     buyStations: [
-      { x: MAP_W / 2 - 300, y: MAP_H / 2 - 300, weapon: "smg" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 + 300, y: MAP_H / 2 - 300, weapon: "shotgun" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 - 300, y: MAP_H / 2 + 300, weapon: "rifle" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 + 300, y: MAP_H / 2 + 300, weapon: "lmg" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 - 300, y: SURFACE_CENTER_Y - 300, weapon: "smg" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y - 300, weapon: "shotgun" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 - 300, y: SURFACE_CENTER_Y + 300, weapon: "rifle" as keyof typeof WEAPONS },
+      { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y + 300, weapon: "lmg" as keyof typeof WEAPONS },
     ],
     ammoBoxes: [
-      { x: MAP_W / 2, y: MAP_H / 2 - 500 },
-      { x: MAP_W / 2, y: MAP_H / 2 + 500 },
+      { x: MAP_W / 2, y: SURFACE_CENTER_Y - 500 },
+      { x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 },
     ],
     obstacles: [] as Obstacle[],
     totems: [] as { x: number; y: number; kills: number; need: number; active: boolean; id: string }[],
@@ -563,7 +565,6 @@ export function ZombieGame() {
     groundInit: false,
     walkPhase: 0,
     muzzleFlash: 0,
-    flashlightOn: true,
     generator: {
       x: GENERATOR_POS.x,
       y: GENERATOR_POS.y,
@@ -580,7 +581,7 @@ export function ZombieGame() {
 
     // Generate obstacles once
     if (s.obstacles.length === 0) {
-      const cx = MAP_W / 2, cy = MAP_H / 2;
+      const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
       const rects: typeof s.obstacles = [
         // central sandbag pit around spawn (leave gaps)
         { x: cx - 90, y: cy - 140, w: 180, h: 18, type: "fence" },
@@ -625,6 +626,7 @@ export function ZombieGame() {
         // cave entrance and chamber at the bottom of the map
         { x: CAVE_RECT.x + 40, y: CAVE_RECT.y, w: CAVE_ENTRY.x - CAVE_RECT.x - 40, h: 32, type: "caveWall" },
         { x: CAVE_ENTRY.x + CAVE_ENTRY.w, y: CAVE_RECT.y, w: CAVE_RECT.x + CAVE_RECT.w - (CAVE_ENTRY.x + CAVE_ENTRY.w) - 40, h: 32, type: "caveWall" },
+        { x: CAVE_ENTRY.x, y: CAVE_RECT.y, w: CAVE_ENTRY.w, h: 42, type: "door" },
         { x: CAVE_RECT.x, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
         { x: CAVE_RECT.x + CAVE_RECT.w - 40, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
         { x: CAVE_RECT.x, y: CAVE_RECT.y + CAVE_RECT.h - 40, w: CAVE_RECT.w, h: 40, type: "caveWall" },
@@ -655,7 +657,7 @@ export function ZombieGame() {
     }
 
     if (s.totems.length === 0) {
-      const cx = MAP_W / 2, cy = MAP_H / 2;
+      const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
       s.totems = [
         { x: cx - 720, y: cy - 720, kills: 0, need: 10, active: true, id: "NW" },
         { x: cx + 720, y: cy - 720, kills: 0, need: 10, active: true, id: "NE" },
@@ -881,8 +883,9 @@ export function ZombieGame() {
     }
 
     function drawFlashlightOverlay() {
-      const caveDark = isInCave(s.player.x, s.player.y) || s.player.y >= CAVE_RECT.y - 40;
-      if (!caveDark || s.generator?.active || !s.flashlightOn) return;
+      const flashlightStartY = CAVE_RECT.y + s.player.r * 4;
+      const caveDark = isInCave(s.player.x, s.player.y) || s.player.y >= flashlightStartY;
+      if (!caveDark || s.generator?.active) return;
 
       const screenX = s.player.x - s.camera.x;
       const screenY = s.player.y - s.camera.y;
@@ -933,10 +936,6 @@ export function ZombieGame() {
       s.keys[e.key.toLowerCase()] = true;
       if (e.key.toLowerCase() === "r") tryReload();
       if (e.key.toLowerCase() === "e") tryInteract();
-      if (e.key.toLowerCase() === "f" && s.started && !s.gameOver) {
-        s.flashlightOn = !s.flashlightOn;
-        setMessage(s.flashlightOn ? "FLASHLIGHT ON" : "FLASHLIGHT OFF", 1200);
-      }
     };
     const ku = (e: KeyboardEvent) => {
       s.keys[e.key.toLowerCase()] = false;
@@ -987,7 +986,6 @@ export function ZombieGame() {
       s.lastShot = performance.now();
       s.startTime = performance.now();
       s.endTime = 0;
-      s.flashlightOn = true;
       if (s.generator) {
         s.generator.active = false;
         s.generator.progressMs = 0;
@@ -1024,6 +1022,23 @@ export function ZombieGame() {
     }
 
     function tryInteract() {
+      // cave door
+      for (let i = 0; i < s.obstacles.length; i++) {
+        const o = s.obstacles[i];
+        if (o.type !== "door") continue;
+        const dx = o.x + o.w / 2 - s.player.x;
+        const dy = o.y + o.h / 2 - s.player.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          if (s.points < CAVE_DOOR_COST) { setMessage(`Need ${CAVE_DOOR_COST} points`); return; }
+          s.points -= CAVE_DOOR_COST;
+          s.obstacles.splice(i, 1);
+          soundEngine.buyWeapon();
+          setMessage("CAVE DOOR OPENED", 2200);
+          syncWeaponUi();
+          return;
+        }
+      }
+
       // buy station
       for (const b of s.buyStations) {
         const dx = b.x - s.player.x, dy = b.y - s.player.y;
@@ -1074,12 +1089,20 @@ export function ZombieGame() {
 
     function spawnZombie() {
       // spawn just outside camera view
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 700;
-      const x = s.player.x + Math.cos(angle) * dist;
-      const y = s.player.y + Math.sin(angle) * dist;
-      const cx = Math.max(50, Math.min(MAP_W - 50, x));
-      const cy = Math.max(50, Math.min(MAP_H - 50, y));
+      let cx = s.player.x;
+      let cy = s.player.y;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 700;
+        const x = s.player.x + Math.cos(angle) * dist;
+        const y = s.player.y + Math.sin(angle) * dist;
+        cx = Math.max(50, Math.min(MAP_W - 50, x));
+        cy = Math.max(50, Math.min(MAP_H - 50, y));
+        if (!isInCave(cx, cy)) break;
+      }
+      if (isInCave(cx, cy)) {
+        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
+      }
       let type: Zombie["type"] = "walker";
       const rr = Math.random();
       if (s.round >= 5 && rr < 0.15) type = "brute";
@@ -1260,7 +1283,7 @@ export function ZombieGame() {
             setMessage(`TOTEM ${t.id} AWAKENED`);
             if (s.totemPhase === 0 && s.totems.every((tt) => !tt.active)) {
               s.totemPhase = 1;
-              s.totems.push({ x: MAP_W / 2, y: MAP_H / 2, kills: 0, need: 25, active: true, id: "CORE" });
+              s.totems.push({ x: MAP_W / 2, y: SURFACE_CENTER_Y, kills: 0, need: 25, active: true, id: "CORE" });
               setMessage("THE CORE CALLS...", 2600);
             } else if (s.totemPhase === 1) {
               s.totemPhase = 2;
@@ -1286,7 +1309,7 @@ export function ZombieGame() {
     }
 
     function enterBossMap() {
-      const cx = MAP_W / 2, cy = MAP_H / 2;
+      const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
       const half = BOSS_ARENA_SIZE / 2;
       s.bossMode = true;
       s.totemPhase = 3;
@@ -1345,7 +1368,7 @@ export function ZombieGame() {
       (s as any)._resolveObstacles(s.player, s.player.r);
       // boss arena bounds
       if (s.bossMode) {
-        const cx = MAP_W / 2, cy = MAP_H / 2;
+        const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
         const half = BOSS_ARENA_SIZE / 2 - s.player.r;
         s.player.x = Math.max(cx - half, Math.min(cx + half, s.player.x));
         s.player.y = Math.max(cy - half, Math.min(cy + half, s.player.y));
@@ -1487,6 +1510,11 @@ export function ZombieGame() {
         (s as any)._resolveObstacles(z, z.radius);
         z.y += dirY * z.speed * dt;
         (s as any)._resolveObstacles(z, z.radius);
+        if (isInCave(z.x, z.y)) {
+          z.y = Math.max(20, CAVE_RECT.y - z.radius - 2);
+          z.x = Math.max(CAVE_RECT.x + z.radius + 2, Math.min(CAVE_RECT.x + CAVE_RECT.w - z.radius - 2, z.x));
+          (s as any)._resolveObstacles(z, z.radius);
+        }
         if (d < z.radius + s.player.r) {
           damagePlayer(z.type === "brute" ? 25 : z.type === "runner" ? 12 : 15);
         }
@@ -1566,7 +1594,7 @@ export function ZombieGame() {
           bs.y += bs.chargeDirY * bs.speed * 3.5 * dt;
           (s as any)._resolveObstacles(bs, bs.radius);
           // arena bounds
-          const cx = MAP_W / 2, cy = MAP_H / 2, half = BOSS_ARENA_SIZE / 2 - bs.radius;
+          const cx = MAP_W / 2, cy = SURFACE_CENTER_Y, half = BOSS_ARENA_SIZE / 2 - bs.radius;
           bs.x = Math.max(cx - half, Math.min(cx + half, bs.x));
           bs.y = Math.max(cy - half, Math.min(cy + half, bs.y));
           // sprint trail particles
@@ -1612,7 +1640,7 @@ export function ZombieGame() {
           bs.y += dirY * bs.speed * dt;
           (s as any)._resolveObstacles(bs, bs.radius);
           // arena bounds
-          const cx = MAP_W / 2, cy = MAP_H / 2, half = BOSS_ARENA_SIZE / 2 - bs.radius;
+          const cx = MAP_W / 2, cy = SURFACE_CENTER_Y, half = BOSS_ARENA_SIZE / 2 - bs.radius;
           bs.x = Math.max(cx - half, Math.min(cx + half, bs.x));
           bs.y = Math.max(cy - half, Math.min(cy + half, bs.y));
           if (d < bs.radius + s.player.r) damagePlayer(bs.phase === 2 ? 40 : 30);
@@ -1820,7 +1848,7 @@ export function ZombieGame() {
 
     function drawMapBounds() {
       if (s.bossMode) {
-        const cx = MAP_W / 2 - s.camera.x, cy = MAP_H / 2 - s.camera.y;
+        const cx = MAP_W / 2 - s.camera.x, cy = SURFACE_CENTER_Y - s.camera.y;
         const arenaHalf = BOSS_ARENA_SIZE / 2;
         const wallHalfX = MAP_W / 2;
         const wallHalfY = MAP_H / 2;
@@ -2085,6 +2113,39 @@ export function ZombieGame() {
             ctx.beginPath();
             ctx.arc(rx, ry, 6 + (i % 3), 0, Math.PI * 2);
             ctx.fill();
+          }
+        } else if (o.type === "door") {
+          const frame = ctx.createLinearGradient(sx, sy, sx, sy + o.h);
+          frame.addColorStop(0, "#4a341f");
+          frame.addColorStop(0.5, "#2e2012");
+          frame.addColorStop(1, "#1a120a");
+          ctx.fillStyle = frame;
+          ctx.fillRect(sx, sy, o.w, o.h);
+          ctx.strokeStyle = "#7b5a33";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(sx, sy, o.w, o.h);
+          ctx.fillStyle = "#927047";
+          ctx.fillRect(sx + 8, sy + 6, o.w - 16, o.h - 12);
+          ctx.strokeStyle = "#3a2817";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx + 8, sy + 6, o.w - 16, o.h - 12);
+          for (let i = 1; i < 4; i++) {
+            const px = sx + (o.w / 4) * i;
+            ctx.beginPath();
+            ctx.moveTo(px, sy + 8);
+            ctx.lineTo(px, sy + o.h - 8);
+            ctx.stroke();
+          }
+          ctx.fillStyle = "#d8b56a";
+          ctx.beginPath();
+          ctx.arc(sx + o.w - 18, sy + o.h / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+          const dx = o.x + o.w / 2 - s.player.x, dy = o.y + o.h / 2 - s.player.y;
+          if (dx * dx + dy * dy < 110 * 110) {
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 12px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(`[E] OPEN ${CAVE_DOOR_COST}`, sx + o.w / 2, sy - 10);
           }
         } else if (o.type === "barrel") {
           const cx = sx + o.w / 2, cy = sy + o.h / 2, r = o.w / 2;
@@ -2560,8 +2621,8 @@ export function ZombieGame() {
                 <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
                 <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
                 <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
+                <div><span className="text-[#c9a24a] font-bold">CAVE DOOR</span> — Open it for 1500 points</div>
                 <div><span className="text-[#c9a24a] font-bold">STAY CLOSE</span> — Power the cave generator for 20 seconds</div>
-                <div><span className="text-[#c9a24a] font-bold">F</span> — Toggle flashlight</div>
                 <div className="pt-2 text-[#8a8a6a] text-xs">
                   Kill zombies to earn points. Spend points at the yellow buy stations to unlock stronger weapons.
                   Green boxes refill ammo. Find the cave at the bottom of the map and bring the power online.
