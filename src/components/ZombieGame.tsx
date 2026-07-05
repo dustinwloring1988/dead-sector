@@ -1479,6 +1479,7 @@ export function ZombieGame() {
       }
 
       // zombies
+      const caveDoorClosed = s.obstacles.some((o) => o.type === "door");
       for (const z of s.zombies) {
         const dx = s.player.x - z.x, dy = s.player.y - z.y;
         const d = Math.hypot(dx, dy) || 1;
@@ -1510,7 +1511,9 @@ export function ZombieGame() {
         (s as any)._resolveObstacles(z, z.radius);
         z.y += dirY * z.speed * dt;
         (s as any)._resolveObstacles(z, z.radius);
-        if (isInCave(z.x, z.y)) {
+        // Once the cave door is opened, zombies are allowed to enter the cave.
+        // Before that, keep them outside so they do not clip through the locked entrance.
+        if (caveDoorClosed && isInCave(z.x, z.y)) {
           z.y = Math.max(20, CAVE_RECT.y - z.radius - 2);
           z.x = Math.max(CAVE_RECT.x + z.radius + 2, Math.min(CAVE_RECT.x + CAVE_RECT.w - z.radius - 2, z.x));
           (s as any)._resolveObstacles(z, z.radius);
