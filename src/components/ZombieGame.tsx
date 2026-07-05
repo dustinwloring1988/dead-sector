@@ -1167,6 +1167,14 @@ export function ZombieGame() {
 
     startGameRef.current = beginGame;
 
+    function haptic(pattern: number | number[]) {
+      try {
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate(pattern);
+        }
+      } catch { /* ignore */ }
+    }
+
     function tryReload() {
       const key = s.currentWeaponKey;
       const w = WEAPONS[key];
@@ -1175,6 +1183,7 @@ export function ZombieGame() {
       if (performance.now() < s.reloadingUntil) return;
       s.reloadingUntil = performance.now() + w.reloadMs;
       soundEngine.reload();
+      haptic([15, 40, 25]);
       setUiState((u) => ({ ...u, reloading: true }));
     }
 
@@ -1370,6 +1379,7 @@ export function ZombieGame() {
         });
       }
       soundEngine.shoot(key);
+      haptic(key === "shotgun" ? 25 : key === "rifle" ? 18 : key === "lmg" ? 12 : 10);
       // muzzle flash
       for (let i = 0; i < 4; i++) {
         s.particles.push({
@@ -1406,7 +1416,10 @@ export function ZombieGame() {
         s.player.hp = 0;
         s.gameOver = true;
         soundEngine.setMusic("menu");
+        haptic([80, 60, 120, 60, 200]);
         setUiState((u) => ({ ...u, gameOver: true, hp: 0 }));
+      } else {
+        haptic([30, 20, 40]);
       }
       setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
     }
