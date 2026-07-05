@@ -10,7 +10,7 @@ type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
 type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
-type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door"; hp?: number };
+type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door" | "golfDoor"; hp?: number };
 type CaveGenerator = Vec & { active: boolean; progressMs: number };
 
 type Weapon = {
@@ -48,6 +48,9 @@ const GENERATOR_HOLD_MS = 20000;
 const CAVE_TOTEM_POS = { x: 1700, y: CAVE_RECT.y + CAVE_RECT.h - 140 };
 const FLASHLIGHT_CONE_ANGLE = Math.PI / 3;
 const FLASHLIGHT_LENGTH = 430;
+const GOLF_ROOM_RECT = { x: 0, y: 0, w: MAP_W, h: 450 };
+const GOLF_ENTRY = { x: 900, w: 200 };
+const GOLF_DOOR_COST = 1000;
 
 // ─── 8-bit Sound Engine (Web Audio API, no files) ───────────────────────────
 type MusicMode = "menu" | "main" | "boss" | null;
@@ -539,7 +542,6 @@ export function ZombieGame() {
       { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y + 300, weapon: "lmg" as keyof typeof WEAPONS },
     ],
     ammoBoxes: [
-      { x: MAP_W / 2, y: SURFACE_CENTER_Y - 500 },
       { x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 },
     ],
     obstacles: [] as Obstacle[],
@@ -573,6 +575,13 @@ export function ZombieGame() {
       progressMs: 0,
     } as CaveGenerator,
     generatorHintShown: false,
+    golfBalls: [] as { x: number; y: number; vx: number; vy: number; hole: number }[],
+    golfHoles: [
+      { x: GOLF_ROOM_RECT.w / 2 - 300, y: 250 },
+      { x: GOLF_ROOM_RECT.w / 2 + 300, y: 250 },
+    ] as { x: number; y: number }[],
+    golfCompleted: false,
+    golfDoorOpened: false,
   });
 
   useEffect(() => {
@@ -631,6 +640,13 @@ export function ZombieGame() {
         { x: CAVE_RECT.x, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
         { x: CAVE_RECT.x + CAVE_RECT.w - 40, y: CAVE_RECT.y, w: 40, h: CAVE_RECT.h, type: "caveWall" },
         { x: CAVE_RECT.x, y: CAVE_RECT.y + CAVE_RECT.h - 40, w: CAVE_RECT.w, h: 40, type: "caveWall" },
+        // golf room entrance and chamber at the top of the map
+        { x: GOLF_ROOM_RECT.x + 40, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 32, w: GOLF_ENTRY.x - GOLF_ROOM_RECT.x - 40, h: 32, type: "caveWall" },
+        { x: GOLF_ENTRY.x + GOLF_ENTRY.w, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 32, w: GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - (GOLF_ENTRY.x + GOLF_ENTRY.w) - 40, h: 32, type: "caveWall" },
+        { x: GOLF_ENTRY.x, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 42, w: GOLF_ENTRY.w, h: 42, type: "golfDoor" },
+        { x: GOLF_ROOM_RECT.x, y: GOLF_ROOM_RECT.y, w: 40, h: GOLF_ROOM_RECT.h, type: "caveWall" },
+        { x: GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - 40, y: GOLF_ROOM_RECT.y, w: 40, h: GOLF_ROOM_RECT.h, type: "caveWall" },
+        { x: GOLF_ROOM_RECT.x, y: GOLF_ROOM_RECT.y, w: GOLF_ROOM_RECT.w, h: 40, type: "caveWall" },
       ];
       s.obstacles = rects;
     }
@@ -806,6 +822,130 @@ export function ZombieGame() {
           ctx.beginPath();
           ctx.arc(lx, ly - 14, 5, 0, Math.PI * 2);
           ctx.fill();
+        }
+      }
+    }
+
+    const golfLights = [
+      { x: GOLF_ROOM_RECT.x + 120, y: GOLF_ROOM_RECT.y + 70 },
+      { x: GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - 120, y: GOLF_ROOM_RECT.y + 70 },
+      { x: GOLF_ROOM_RECT.x + 120, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 78 },
+      { x: GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - 120, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 78 },
+      { x: GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w / 2, y: GOLF_ROOM_RECT.y + 90 },
+    ];
+
+    function drawGolfRoom() {
+      const sx = GOLF_ROOM_RECT.x - s.camera.x;
+      const sy = GOLF_ROOM_RECT.y - s.camera.y;
+      if (sx > canvas.width || sy > canvas.height || sx + GOLF_ROOM_RECT.w < 0 || sy + GOLF_ROOM_RECT.h < 0) return;
+
+      // room floor – green felt
+      const base = ctx.createLinearGradient(sx, sy, sx, sy + GOLF_ROOM_RECT.h);
+      base.addColorStop(0, "#1a3a1a");
+      base.addColorStop(0.5, "#1e4a1e");
+      base.addColorStop(1, "#1a3a1a");
+      ctx.fillStyle = base;
+      ctx.fillRect(sx, sy, GOLF_ROOM_RECT.w, GOLF_ROOM_RECT.h);
+
+      if (!s.golfDoorOpened) {
+        ctx.fillStyle = "rgba(0,0,0,0.92)";
+        ctx.fillRect(sx + 16, sy, GOLF_ROOM_RECT.w - 32, GOLF_ROOM_RECT.h - 16);
+      }
+
+      // entry lip
+      const entryX = GOLF_ENTRY.x - s.camera.x;
+      const entryY = sy + GOLF_ROOM_RECT.h - 42;
+      ctx.fillStyle = s.golfDoorOpened ? "rgba(40,80,40,0.4)" : "rgba(0,0,0,0.98)";
+      ctx.fillRect(entryX, entryY, GOLF_ENTRY.w, 42);
+
+      // lamp posts (always on)
+      for (const light of golfLights) {
+        const lx = light.x - s.camera.x;
+        const ly = light.y - s.camera.y;
+        const pulse = 0.7 + Math.sin(performance.now() / 260 + light.x * 0.01) * 0.3;
+        const glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, 140);
+        glow.addColorStop(0, `rgba(255,236,180,${0.35 * pulse})`);
+        glow.addColorStop(0.5, `rgba(255,182,70,${0.18 * pulse})`);
+        glow.addColorStop(1, "rgba(255,182,70,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 140, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#3c2f1f";
+        ctx.fillRect(lx - 3, ly - 12, 6, 24);
+        ctx.fillStyle = "#ffd98a";
+        ctx.beginPath();
+        ctx.arc(lx, ly - 14, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // draw holes
+      for (const h of s.golfHoles) {
+        const hx = h.x - s.camera.x;
+        const hy = h.y - s.camera.y;
+        ctx.fillStyle = "#0a0a0a";
+        ctx.beginPath();
+        ctx.arc(hx, hy, 18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // flag pole
+        ctx.fillStyle = "#aaa";
+        ctx.fillRect(hx - 1, hy - 40, 2, 40);
+        // flag
+        ctx.fillStyle = "#e03030";
+        ctx.beginPath();
+        ctx.moveTo(hx + 1, hy - 40);
+        ctx.lineTo(hx + 14, hy - 34);
+        ctx.lineTo(hx + 1, hy - 28);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // draw golf balls
+      for (let bi = 0; bi < s.golfBalls.length; bi++) {
+        const ball = s.golfBalls[bi];
+        if (ball.hole >= 0) continue;
+        const bx = ball.x - s.camera.x;
+        const by = ball.y - s.camera.y;
+        // shadow
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.beginPath();
+        ctx.ellipse(bx + 2, by + 4, 10, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // ball body
+        ctx.fillStyle = "#f0f0e8";
+        ctx.beginPath();
+        ctx.arc(bx, by, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#bbb";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // dimple pattern
+        ctx.fillStyle = "rgba(180,180,170,0.4)";
+        for (let d = 0; d < 5; d++) {
+          const da = (d / 5) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(bx + Math.cos(da) * 4, by + Math.sin(da) * 4, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // number
+        ctx.fillStyle = "#666";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(`${bi + 1}`, bx, by + 3);
+      }
+
+      // hint text when player is near entry
+      if (s.golfDoorOpened && !s.golfCompleted) {
+        const pdx = GOLF_ENTRY.x + GOLF_ENTRY.w / 2 - s.player.x;
+        const pdy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 21 - s.player.y;
+        if (pdx * pdx + pdy * pdy < 120 * 120) {
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 11px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("SHOOT BALLS INTO HOLES", sx + GOLF_ROOM_RECT.w / 2, sy + GOLF_ROOM_RECT.h - 55);
         }
       }
     }
@@ -1040,6 +1180,31 @@ export function ZombieGame() {
         }
       }
 
+      // golf door
+      for (let i = 0; i < s.obstacles.length; i++) {
+        const o = s.obstacles[i];
+        if (o.type !== "golfDoor") continue;
+        const dx = o.x + o.w / 2 - s.player.x;
+        const dy = o.y + o.h / 2 - s.player.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          if (s.points < GOLF_DOOR_COST) { setMessage(`Need ${GOLF_DOOR_COST} points`); return; }
+          s.points -= GOLF_DOOR_COST;
+          s.obstacles.splice(i, 1);
+          s.golfDoorOpened = true;
+          soundEngine.buyWeapon();
+          setMessage("GOLF ROOM OPENED", 2200);
+          // init golf balls
+          if (s.golfBalls.length === 0) {
+            s.golfBalls = [
+              { x: GOLF_ROOM_RECT.w / 2 - 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+              { x: GOLF_ROOM_RECT.w / 2 + 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+            ];
+          }
+          syncWeaponUi();
+          return;
+        }
+      }
+
       // buy station
       for (const b of s.buyStations) {
         const dx = b.x - s.player.x, dy = b.y - s.player.y;
@@ -1103,6 +1268,9 @@ export function ZombieGame() {
       }
       if (isInCave(cx, cy)) {
         cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
+      }
+      if (cx >= GOLF_ROOM_RECT.x && cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w && cy >= GOLF_ROOM_RECT.y && cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h) {
+        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
       }
       let type: Zombie["type"] = "walker";
       const rr = Math.random();
@@ -1415,6 +1583,67 @@ export function ZombieGame() {
         }
       }
 
+      // golf ball physics
+      if (!s.golfCompleted && s.golfBalls.length > 0) {
+        const BALL_RADIUS = 10;
+        const FRICTION = 0.985;
+        const BOUNCE = 0.75;
+        const HOLE_RADIUS = 18;
+        const WALL_T = 40;
+        for (const ball of s.golfBalls) {
+          if (ball.hole >= 0) continue;
+          ball.x += ball.vx * dt;
+          ball.y += ball.vy * dt;
+          ball.vx *= FRICTION;
+          ball.vy *= FRICTION;
+          if (Math.abs(ball.vx) < 2 && Math.abs(ball.vy) < 2) { ball.vx = 0; ball.vy = 0; }
+          // bounce off room walls
+          if (ball.x - BALL_RADIUS < GOLF_ROOM_RECT.x + WALL_T) {
+            ball.x = GOLF_ROOM_RECT.x + WALL_T + BALL_RADIUS;
+            ball.vx = Math.abs(ball.vx) * BOUNCE;
+          }
+          if (ball.x + BALL_RADIUS > GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - WALL_T) {
+            ball.x = GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w - WALL_T - BALL_RADIUS;
+            ball.vx = -Math.abs(ball.vx) * BOUNCE;
+          }
+          if (ball.y - BALL_RADIUS < GOLF_ROOM_RECT.y + WALL_T) {
+            ball.y = GOLF_ROOM_RECT.y + WALL_T + BALL_RADIUS;
+            ball.vy = Math.abs(ball.vy) * BOUNCE;
+          }
+          if (ball.y + BALL_RADIUS > GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - WALL_T) {
+            ball.y = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - WALL_T - BALL_RADIUS;
+            ball.vy = -Math.abs(ball.vy) * BOUNCE;
+          }
+          // check hole
+          for (let hi = 0; hi < s.golfHoles.length; hi++) {
+            const h = s.golfHoles[hi];
+            if (Math.hypot(ball.x - h.x, ball.y - h.y) < HOLE_RADIUS) {
+              ball.hole = hi;
+              ball.vx = 0; ball.vy = 0;
+              ball.x = h.x; ball.y = h.y;
+              soundEngine.buyWeapon();
+              setMessage(`BALL ${s.golfBalls.indexOf(ball) + 1} IN HOLE ${hi + 1}!`, 1500);
+              break;
+            }
+          }
+        }
+        // check completion
+        if (s.golfBalls.every(b => b.hole >= 0)) {
+          if (s.golfBalls[0].hole === s.golfBalls[1].hole) {
+            setMessage("BOTH BALLS IN SAME HOLE - TRY AGAIN", 2200);
+            s.golfBalls = [
+              { x: GOLF_ROOM_RECT.w / 2 - 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+              { x: GOLF_ROOM_RECT.w / 2 + 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+            ];
+          } else {
+            s.golfCompleted = true;
+            setMessage("MINI GOLF COMPLETE! +2000 PTS", 3000);
+            s.points += 2000;
+            syncWeaponUi();
+          }
+        }
+      }
+
       // reload finish
       if (s.reloadingUntil > 0 && performance.now() >= s.reloadingUntil) {
         s.reloadingUntil = 0;
@@ -1464,6 +1693,25 @@ export function ZombieGame() {
                 life: 0.25, maxLife: 0.25, color: "#888", size: 2 + Math.random() * 2,
               });
             }
+          }
+        }
+        if (!hit) for (const gb of s.golfBalls) {
+          if (gb.hole >= 0) continue;
+          const dx = gb.x - b.x, dy = gb.y - b.y;
+          if (dx * dx + dy * dy < 14 * 14) {
+            const pushAngle = Math.atan2(b.vy, b.vx);
+            gb.vx += Math.cos(pushAngle) * 420;
+            gb.vy += Math.sin(pushAngle) * 420;
+            hit = true;
+            soundEngine.obstacleHit();
+            for (let k = 0; k < 3; k++) {
+              const a = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: b.x, y: b.y, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
+                life: 0.2, maxLife: 0.2, color: "#fff", size: 2 + Math.random() * 2,
+              });
+            }
+            break;
           }
         }
         if (!hit) for (let j = s.zombies.length - 1; j >= 0; j--) {
@@ -2164,6 +2412,39 @@ export function ZombieGame() {
             ctx.textAlign = "center";
             ctx.fillText(`[E] OPEN ${CAVE_DOOR_COST}`, sx + o.w / 2, sy - 10);
           }
+        } else if (o.type === "golfDoor") {
+          const frame = ctx.createLinearGradient(sx, sy, sx, sy + o.h);
+          frame.addColorStop(0, "#2a4a2a");
+          frame.addColorStop(0.5, "#1a3a1a");
+          frame.addColorStop(1, "#0a2a0a");
+          ctx.fillStyle = frame;
+          ctx.fillRect(sx, sy, o.w, o.h);
+          ctx.strokeStyle = "#4a8a4a";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(sx, sy, o.w, o.h);
+          ctx.fillStyle = "#5aaa5a";
+          ctx.fillRect(sx + 8, sy + 6, o.w - 16, o.h - 12);
+          ctx.strokeStyle = "#2a5a2a";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx + 8, sy + 6, o.w - 16, o.h - 12);
+          for (let i = 1; i < 4; i++) {
+            const px = sx + (o.w / 4) * i;
+            ctx.beginPath();
+            ctx.moveTo(px, sy + 8);
+            ctx.lineTo(px, sy + o.h - 8);
+            ctx.stroke();
+          }
+          ctx.fillStyle = "#a0d8a0";
+          ctx.beginPath();
+          ctx.arc(sx + o.w - 18, sy + o.h / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+          const dx = o.x + o.w / 2 - s.player.x, dy = o.y + o.h / 2 - s.player.y;
+          if (dx * dx + dy * dy < 110 * 110) {
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 12px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(`[E] OPEN ${GOLF_DOOR_COST}`, sx + o.w / 2, sy - 10);
+          }
         } else if (o.type === "barrel") {
           const cx = sx + o.w / 2, cy = sy + o.h / 2, r = o.w / 2;
           const hpRatio = o.hp !== undefined ? Math.max(0, o.hp / 50) : 1;
@@ -2468,6 +2749,7 @@ export function ZombieGame() {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drawGrid();
       drawCaveArea();
+      drawGolfRoom();
       drawDecals();
       drawMapBounds();
       if (s.bossMode) drawLava();
