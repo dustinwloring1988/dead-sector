@@ -1379,6 +1379,7 @@ export function ZombieGame() {
         });
       }
       soundEngine.shoot(key);
+      haptic(key === "shotgun" ? 25 : key === "rifle" ? 18 : key === "lmg" ? 12 : 10);
       // muzzle flash
       for (let i = 0; i < 4; i++) {
         s.particles.push({
