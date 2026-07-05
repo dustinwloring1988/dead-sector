@@ -45,6 +45,7 @@ const CAVE_DOOR_COST = 1500;
 const GENERATOR_POS = { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 120 };
 const GENERATOR_INTERACT_DISTANCE = 80;
 const GENERATOR_HOLD_MS = 20000;
+const CAVE_TOTEM_POS = { x: 1700, y: CAVE_RECT.y + CAVE_RECT.h - 140 };
 const FLASHLIGHT_CONE_ANGLE = Math.PI / 3;
 const FLASHLIGHT_LENGTH = 430;
 
@@ -543,7 +544,7 @@ export function ZombieGame() {
     ],
     obstacles: [] as Obstacle[],
     totems: [] as { x: number; y: number; kills: number; need: number; active: boolean; id: string }[],
-    totemPhase: 0 as 0 | 1 | 2 | 3, // 0=corners, 1=center, 2=transitioning, 3=boss
+    totemPhase: 0 as 0 | 1 | 2 | 3 | 4 | 5, // 0=corners, 1=generator, 2=cave totem, 3=center, 4=transitioning, 5=boss
     transitionFlash: 0,
     bossMode: false,
     boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number },
@@ -1282,11 +1283,20 @@ export function ZombieGame() {
             soundEngine.totemAwaken();
             setMessage(`TOTEM ${t.id} AWAKENED`);
             if (s.totemPhase === 0 && s.totems.every((tt) => !tt.active)) {
-              s.totemPhase = 1;
+              if (s.totems.some((tt) => tt.id === "CAVE")) {
+                s.totemPhase = 2;
+              } else if (s.generator.active) {
+                s.totemPhase = 2;
+              } else {
+                s.totemPhase = 1;
+                setMessage("THE CAVE REQUIRES POWER...", 2600);
+              }
+            } else if (s.totemPhase === 2 && t.id === "CAVE") {
+              s.totemPhase = 3;
               s.totems.push({ x: MAP_W / 2, y: SURFACE_CENTER_Y, kills: 0, need: 25, active: true, id: "CORE" });
               setMessage("THE CORE CALLS...", 2600);
-            } else if (s.totemPhase === 1) {
-              s.totemPhase = 2;
+            } else if (s.totemPhase === 3) {
+              s.totemPhase = 4;
               s.transitionFlash = 1;
               // insta-kill all zombies
               for (const zz of s.zombies) {
@@ -1312,7 +1322,7 @@ export function ZombieGame() {
       const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
       const half = BOSS_ARENA_SIZE / 2;
       s.bossMode = true;
-      s.totemPhase = 3;
+      s.totemPhase = 5;
       s.zombies.length = 0;
       s.bullets.length = 0;
       s.pickups.length = 0;
@@ -1394,6 +1404,10 @@ export function ZombieGame() {
             s.generator.progressMs = GENERATOR_HOLD_MS;
             s.generatorHintShown = false;
             setMessage("CAVE LIGHTS RESTORED", 2600);
+            if (!s.totems.some((tt) => tt.id === "CAVE")) {
+              s.totems.push({ x: CAVE_TOTEM_POS.x, y: CAVE_TOTEM_POS.y, kills: 0, need: 15, active: true, id: "CAVE" });
+              setMessage("A TOTEM AWAKENS IN THE DEPTHS...", 2600);
+            }
           }
         } else {
           s.generator.progressMs = 0;
@@ -1539,7 +1553,7 @@ export function ZombieGame() {
       }
 
       // spawning (disabled in boss mode / transition)
-      if (!s.bossMode && s.totemPhase < 2 && s.zombiesToSpawn > 0) {
+      if (!s.bossMode && s.totemPhase < 4 && s.zombiesToSpawn > 0) {
         s.spawnCooldown -= dt * 1000;
         if (s.spawnCooldown <= 0 && s.zombiesAlive < Math.min(24, 8 + s.round * 2)) {
           spawnZombie();
@@ -1547,7 +1561,7 @@ export function ZombieGame() {
           s.spawnCooldown = Math.max(200, 800 - s.round * 40);
         }
       }
-      if (!s.bossMode && s.totemPhase < 2 && s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
+      if (!s.bossMode && s.totemPhase < 4 && s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
         setTimeout(() => startRound(s.round + 1), 3000);
         s.zombiesToSpawn = -1; // guard
       }
