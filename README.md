@@ -45,8 +45,17 @@ bun run preview
 
 - Wave-based survival gameplay
 - 5 unlockable weapons (Pistol, SMG, Shotgun, Battle Rifle, Heavy MG)
-- Multiple zombie types (Walkers, Runners, Brutes, Fire, Toxic)
-- Cave system and golf room areas
+- 7 zombie types (Walkers, Runners, Brutes, Fire, Toxic, Fire Miniboss, Toxic Miniboss)
+- Boss fight — "THE HARBINGER" with 2 phases and sprint attack
+- Totem/easter egg progression system leading to the boss
+- Generator puzzle — restore power to the cave
+- Mini-golf mini-game in the golf room
+- Cave system with flashlight and torch lighting mechanics
+- Toxic gas and lava hazards
+- Exploding barrels and environmental obstacles (rocks, crates, sandbag fences)
+- Pickups (health, ammo)
+- Rank system (S-RANK, A-RANK) based on completion time
+- Stats tracking (kills, accuracy, time)
 - 8-bit procedural sound engine (Web Audio API)
-- Touch controls for mobile
+- Touch controls for mobile with haptics
 - Points system for weapon purchases

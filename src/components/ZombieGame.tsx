@@ -1337,7 +1337,7 @@ export function ZombieGame() {
       if (s.round >= 5 && rr < 0.15) type = "brute";
       else if (s.round >= 4 && rr < 0.08) type = "brute";
       else if (s.round >= 3 && rr < 0.22) type = "runner";
-      else if (s.round >= 2 && rr < 0.12) type = "runner";
+      else if (s.round >= 3 && rr < 0.12) type = "runner";
       let hp = 30 + s.round * 15;
       let speed = 50 + s.round * 3;
       let radius = 16;
