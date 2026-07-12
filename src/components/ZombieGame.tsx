@@ -5,15 +5,7 @@ import { useGameSettings } from "@/hooks/use-settings";
 import { SettingsModal } from "@/components/SettingsModal";
 import { createRenderer } from "@/lib/gameRendering";
 import { soundEngine } from "@/lib/soundEngine";
-import type {
-  Bullet,
-  Zombie,
-  ToxicGas,
-  ToxicProjectile,
-  Particle,
-  Pickup,
-  Obstacle,
-} from "@/lib/gameTypes";
+import type { Obstacle, Zombie } from "@/lib/gameTypes";
 import { WEAPONS } from "@/lib/weapons";
 import { TouchControls } from "@/components/TouchControls";
 import { createInitialState } from "@/lib/gameState";
@@ -34,6 +26,34 @@ import {
   updateCamera,
   updateWalkAnimation,
 } from "@/lib/playerSystem";
+import {
+  circleRectOverlap,
+  resolveCircleAgainstObstacles,
+  bulletHitsObstacle,
+  findHitObstacle,
+  isInCave as isInCaveFn,
+  isInGolfRoom as isInGolfRoomFn,
+} from "@/lib/physicsUtils";
+import {
+  updateZombies,
+  spawnZombie,
+  spawnFireZombie,
+  spawnFireMiniboss,
+  spawnToxicMiniboss,
+  spawnGhostZombie,
+  spawnUnderworldZombie,
+} from "@/lib/zombieSystem";
+import {
+  tryInteract as tryInteractFn,
+  tryInteract2 as tryInteract2Fn,
+  openDoor as openDoorFn,
+  updateDoorHolds,
+} from "@/lib/interactionSystem";
+import {
+  setupInputHandlers,
+  detectGamepad,
+  pollGamepad as pollGamepadFn,
+} from "@/lib/inputSystem";
 
 // Dead Sector — original round-based top-down zombie shooter.
 // Not affiliated with any existing franchise.
@@ -44,8 +64,6 @@ const SURFACE_CENTER_Y = 1000;
 const BOSS_ARENA_SIZE = 1000;
 const CAVE_RECT = { x: 0, y: 2000, w: MAP_W, h: 600 };
 const CAVE_ENTRY = { x: 900, w: 200 };
-const CAVE_DOOR_COST = 1500;
-const GENERATOR_POS = { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 120 };
 const GENERATOR_INTERACT_DISTANCE = 80;
 const GENERATOR_HOLD_MS = 20000;
 const DOOR_HOLD_MS = 1500;
@@ -56,7 +74,6 @@ const FLASHLIGHT_CONE_ANGLE = Math.PI / 3;
 const FLASHLIGHT_LENGTH = 430;
 const GOLF_ROOM_RECT = { x: 0, y: 0, w: MAP_W, h: 450 };
 const GOLF_ENTRY = { x: 900, w: 200 };
-const GOLF_DOOR_COST = 1000;
 const TORCH_POSITIONS = [
   { x: 400, y: 1000 },
   { x: 1600, y: 1000 },
@@ -286,78 +303,16 @@ export function ZombieGame() {
       s.torches = TORCH_POSITIONS.map((p) => ({ x: p.x, y: p.y, lit: false }));
     }
 
-    // Collision helpers
-    const circleRectOverlap = (
-      cx: number,
-      cy: number,
-      r: number,
-      rx: number,
-      ry: number,
-      rw: number,
-      rh: number,
-    ) => {
-      const closestX = Math.max(rx, Math.min(cx, rx + rw));
-      const closestY = Math.max(ry, Math.min(cy, ry + rh));
-      const dx = cx - closestX,
-        dy = cy - closestY;
-      return dx * dx + dy * dy < r * r;
-    };
-    const resolveCircleAgainstObstacles = (pos: { x: number; y: number }, r: number) => {
-      for (const o of s.obstacles) {
-        if (!circleRectOverlap(pos.x, pos.y, r, o.x, o.y, o.w, o.h)) continue;
-        const closestX = Math.max(o.x, Math.min(pos.x, o.x + o.w));
-        const closestY = Math.max(o.y, Math.min(pos.y, o.y + o.h));
-        const dx = pos.x - closestX,
-          dy = pos.y - closestY;
-        const dist = Math.hypot(dx, dy);
-        if (dist === 0) {
-          // Push out toward nearest edge
-          const leftD = pos.x - o.x,
-            rightD = o.x + o.w - pos.x;
-          const topD = pos.y - o.y,
-            botD = o.y + o.h - pos.y;
-          const m = Math.min(leftD, rightD, topD, botD);
-          if (m === leftD) {
-            pos.x = o.x - r;
-          } else if (m === rightD) {
-            pos.x = o.x + o.w + r;
-          } else if (m === topD) {
-            pos.y = o.y - r;
-          } else {
-            pos.y = o.y + o.h + r;
-          }
-          continue;
-        }
-        const push = r - dist;
-        pos.x += (dx / dist) * push;
-        pos.y += (dy / dist) * push;
-      }
-    };
-    s._resolveObstacles = resolveCircleAgainstObstacles;
-    s._bulletHitsObstacle = (bx: number, by: number) => {
-      for (const o of s.obstacles) {
-        if (bx >= o.x && bx <= o.x + o.w && by >= o.y && by <= o.y + o.h) return true;
-      }
-      return false;
-    };
-    s._findHitObstacle = (bx: number, by: number) => {
-      for (let i = 0; i < s.obstacles.length; i++) {
-        const o = s.obstacles[i];
-        if (bx >= o.x && bx <= o.x + o.w && by >= o.y && by <= o.y + o.h) return i;
-      }
-      return -1;
-    };
+    // Collision helpers (delegate to physicsUtils, closing over s.obstacles)
+    s._resolveObstacles = (pos: { x: number; y: number }, r: number) =>
+      resolveCircleAgainstObstacles(pos, r, s.obstacles);
+    s._bulletHitsObstacle = (bx: number, by: number) =>
+      bulletHitsObstacle(bx, by, s.obstacles);
+    s._findHitObstacle = (bx: number, by: number) =>
+      findHitObstacle(bx, by, s.obstacles);
 
-    const isInCave = (x: number, y: number) =>
-      x >= CAVE_RECT.x &&
-      x <= CAVE_RECT.x + CAVE_RECT.w &&
-      y >= CAVE_RECT.y &&
-      y <= CAVE_RECT.y + CAVE_RECT.h;
-    const isInGolfRoom = (x: number, y: number) =>
-      x >= GOLF_ROOM_RECT.x &&
-      x <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w &&
-      y >= GOLF_ROOM_RECT.y &&
-      y <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h;
+    const isInCave = isInCaveFn;
+    const isInGolfRoom = isInGolfRoomFn;
 
     const caveDark = () => isInCave(s.player.x, s.player.y) && !s.generator?.active;
     const isInPlayerFlashlight = (
@@ -392,47 +347,6 @@ export function ZombieGame() {
       return false;
     };
 
-    const CAVE_ENTRY_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y + 64 };
-    const CAVE_EXIT_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y - 44 };
-    const GOLF_ENTRY_TARGET = {
-      x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2,
-      y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 22,
-    };
-    const GOLF_EXIT_TARGET = {
-      x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2,
-      y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 44,
-    };
-
-    const getZombiePursuitTarget = (z: Zombie) => {
-      // Find closest alive player
-      let targetPlayer: typeof s.player | null = null;
-      let targetDist = Infinity;
-      if (s.player.hp > 0) {
-        targetPlayer = s.player;
-        targetDist = Math.hypot(s.player.x - z.x, s.player.y - z.y);
-      }
-      if (s.gameMode === "split" && s.player2Alive) {
-        const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
-        if (d2 < targetDist) {
-          targetPlayer = s.player2;
-          targetDist = d2;
-        }
-      }
-      if (!targetPlayer) return { x: z.x, y: z.y };
-
-      const playerInCave = isInCave(targetPlayer.x, targetPlayer.y);
-      const playerInGolf = isInGolfRoom(targetPlayer.x, targetPlayer.y);
-      const zombieInCave = isInCave(z.x, z.y);
-      const zombieInGolf = isInGolfRoom(z.x, z.y);
-
-      if (playerInCave && !zombieInCave) return CAVE_ENTRY_TARGET;
-      if (playerInGolf && !zombieInGolf) return GOLF_ENTRY_TARGET;
-      if (!playerInCave && zombieInCave) return CAVE_EXIT_TARGET;
-      if (!playerInGolf && zombieInGolf) return GOLF_EXIT_TARGET;
-
-      return { x: targetPlayer.x, y: targetPlayer.y };
-    };
-
     const renderer = createRenderer({
       ctx,
       canvas,
@@ -449,91 +363,14 @@ export function ZombieGame() {
     resize();
     window.addEventListener("resize", resize);
 
-    const kd = (e: KeyboardEvent) => {
-      s.keys[e.key.toLowerCase()] = true;
-      if (e.key.toLowerCase() === "r") tryReload();
-      if (e.key.toLowerCase() === "e") {
-        // Check for revive proximity first (split-screen)
-        let reviveStarted = false;
-        if (s.gameMode === "split" && s.player.hp > 0 && !s.player2Alive) {
-          // Only start if not already reviving (prevents OS key-repeat from resetting timer)
-          if (s._reviveHoldStart === 0) {
-            const dx = s.player2.x - s.player.x,
-              dy = s.player2.y - s.player.y;
-            if (dx * dx + dy * dy < 90 * 90) {
-              s._reviveHoldStart = performance.now();
-              s._reviveTarget = 2;
-              reviveStarted = true;
-            }
-          } else {
-            reviveStarted = true; // already reviving, don't fall through to door hold
-          }
-        }
-        if (!reviveStarted && s._doorHoldStartP1 === 0) {
-          s._doorHoldStartP1 = performance.now();
-        }
-      }
-    };
-    const ku = (e: KeyboardEvent) => {
-      s.keys[e.key.toLowerCase()] = false;
-      if (e.key.toLowerCase() === "e") {
-        if (s._reviveHoldStart > 0) {
-          s._reviveHoldStart = 0;
-          s._reviveTarget = 0;
-        } else if (
-          s._doorHoldStartP1 > 0 &&
-          performance.now() - s._doorHoldStartP1 < DOOR_HOLD_MS
-        ) {
-          tryInteract();
-        }
-        s._doorHoldStartP1 = 0;
-      }
-    };
-    const mm = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      s.mouse.x = e.clientX - rect.left;
-      s.mouse.y = e.clientY - rect.top;
-    };
-    const md = () => {
-      if (!s.started) {
-        beginGame();
-        return;
-      }
-      s.mouse.down = true;
-    };
-    const mu = () => (s.mouse.down = false);
-
-    window.addEventListener("keydown", kd);
-    window.addEventListener("keyup", ku);
-    canvas.addEventListener("mousemove", mm);
-    canvas.addEventListener("mousedown", md);
-    // bind mouseup + blur to window so releasing outside canvas still stops firing
-    window.addEventListener("mouseup", mu);
-    window.addEventListener("blur", mu);
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-
-    // Controller detection for split-screen lobby
-    const onGamepadConnected = (e: GamepadEvent) => {
-      s.controllerIndex = e.gamepad.index;
-      setControllerConnected(true);
-    };
-    const onGamepadDisconnected = (e: GamepadEvent) => {
-      if (e.gamepad.index === s.controllerIndex) {
-        s.controllerIndex = -1;
-        setControllerConnected(false);
-      }
-    };
-    window.addEventListener("gamepadconnected", onGamepadConnected);
-    window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
-    // Check for already-connected controllers
-    const existingGamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    for (let i = 0; i < existingGamepads.length; i++) {
-      if (existingGamepads[i]) {
-        s.controllerIndex = i;
-        setControllerConnected(true);
-        break;
-      }
-    }
+    // Input handlers (keyboard, mouse, gamepad connection)
+    const cleanupInput = setupInputHandlers(s, canvas, {
+      tryReload: () => tryReload(),
+      tryInteract: () => tryInteract(),
+      tryInteract2: () => tryInteract2(),
+      beginGame,
+      setControllerConnected,
+    });
 
     function setMessage(m: string, ms = 1800, target: 0 | 1 | 2 = 0) {
       s.message = m;
@@ -595,117 +432,6 @@ export function ZombieGame() {
       } catch {
         /* ignore */
       }
-    }
-
-    // ─── Gamepad polling for Player 2 ──────────────────────────────────────────
-    const GAMEPAD_DEADZONE = 0.18;
-    const GAMEPAD_TRIGGER_THRESHOLD = 0.5;
-    let p2PrevLB = false;
-    let p2PrevY = false;
-
-    // Continuous controller detection (runs even on menu for lobby detection)
-    function detectGamepad() {
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      // Try to find a connected gamepad
-      if (s.controllerIndex < 0 || !gamepads[s.controllerIndex]) {
-        for (let i = 0; i < gamepads.length; i++) {
-          if (gamepads[i]) {
-            s.controllerIndex = i;
-            setControllerConnected(true);
-            break;
-          }
-        }
-      } else {
-        // Verify still connected
-        if (!gamepads[s.controllerIndex]) {
-          s.controllerIndex = -1;
-          setControllerConnected(false);
-        }
-      }
-    }
-
-    function pollGamepad() {
-      if (s.gameMode !== "split" || !s.started || s.gameOver) return;
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      const gp = gamepads[s.controllerIndex];
-      if (!gp) {
-        // Controller disconnected — try to find one
-        for (let i = 0; i < gamepads.length; i++) {
-          if (gamepads[i]) {
-            s.controllerIndex = i;
-            return pollGamepad();
-          }
-        }
-        return;
-      }
-
-      // Left stick → movement
-      let lx = gp.axes[0] || 0;
-      let ly = gp.axes[1] || 0;
-      if (Math.abs(lx) < GAMEPAD_DEADZONE) lx = 0;
-      if (Math.abs(ly) < GAMEPAD_DEADZONE) ly = 0;
-      s._p2MoveX = lx;
-      s._p2MoveY = ly;
-
-      // Right stick → aim direction (if magnitude > deadzone)
-      let rx = gp.axes[2] || 0;
-      let ry = gp.axes[3] || 0;
-      if (Math.abs(rx) < GAMEPAD_DEADZONE) rx = 0;
-      if (Math.abs(ry) < GAMEPAD_DEADZONE) ry = 0;
-      if (rx !== 0 || ry !== 0) {
-        s.player2.angle = Math.atan2(ry, rx);
-        // Set world aim point for shooting direction
-        s.mouse2.worldX = s.player2.x + Math.cos(s.player2.angle) * 200;
-        s.mouse2.worldY = s.player2.y + Math.sin(s.player2.angle) * 200;
-      }
-
-      // Right trigger → shoot
-      const rtVal = gp.buttons[7]?.value ?? 0;
-      const rtDown = rtVal > GAMEPAD_TRIGGER_THRESHOLD;
-      s.mouse2.down = rtDown;
-
-      // Left bumper → reload (edge-triggered)
-      const lbDown = !!gp.buttons[4]?.pressed;
-      if (lbDown && !p2PrevLB) {
-        tryReload2();
-      }
-      p2PrevLB = lbDown;
-
-      // Y button → interact (hold to pay half or revive, tap to buy full)
-      const yDown = !!gp.buttons[3]?.pressed;
-      if (yDown && !p2PrevY) {
-        // Check for revive proximity first
-        let reviveStarted = false;
-        if (s.player2Alive && s.player.hp <= 0) {
-          const dx = s.player.x - s.player2.x,
-            dy = s.player.y - s.player2.y;
-          if (dx * dx + dy * dy < 90 * 90) {
-            s._reviveHoldStart = performance.now();
-            s._reviveTarget = 1;
-            reviveStarted = true;
-          }
-        }
-        if (!reviveStarted) {
-          s._doorHoldStartP2 = performance.now();
-        }
-      }
-      if (!yDown && p2PrevY) {
-        if (s._reviveHoldStart > 0) {
-          s._reviveHoldStart = 0;
-          s._reviveTarget = 0;
-        } else if (
-          s._doorHoldStartP2 > 0 &&
-          performance.now() - s._doorHoldStartP2 < DOOR_HOLD_MS
-        ) {
-          tryInteract2();
-        }
-        s._doorHoldStartP2 = 0;
-      }
-      p2PrevY = yDown;
-
-      // D-pad → weapon switching
-      if (gp.buttons[12]?.pressed) cycleWeapon2(-1); // up
-      if (gp.buttons[13]?.pressed) cycleWeapon2(1); // down
     }
 
     function tryReload2() {
@@ -779,104 +505,11 @@ export function ZombieGame() {
     }
 
     function tryInteract2() {
-      // cave door
-      for (let i = 0; i < s.obstacles.length; i++) {
-        const o = s.obstacles[i];
-        if (o.type !== "door") continue;
-        const dx = o.x + o.w / 2 - s.player2.x;
-        const dy = o.y + o.h / 2 - s.player2.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          const remaining = CAVE_DOOR_COST - (o.paid || 0);
-          if (s.points2 < remaining) {
-            setMessage(`Need ${remaining} points`, 1800, 2);
-            return;
-          }
-          s.points2 -= remaining;
-          openDoor(o, 2);
-          return;
-        }
-      }
-      // golf door
-      for (let i = 0; i < s.obstacles.length; i++) {
-        const o = s.obstacles[i];
-        if (o.type !== "golfDoor") continue;
-        const dx = o.x + o.w / 2 - s.player2.x;
-        const dy = o.y + o.h / 2 - s.player2.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          const remaining = GOLF_DOOR_COST - (o.paid || 0);
-          if (s.points2 < remaining) {
-            setMessage(`Need ${remaining} points`, 1800, 2);
-            return;
-          }
-          s.points2 -= remaining;
-          openDoor(o, 2);
-          return;
-        }
-      }
-      // buy station
-      for (const b of s.buyStations) {
-        const dx = b.x - s.player2.x,
-          dy = b.y - s.player2.y;
-        if (dx * dx + dy * dy < 70 * 70) {
-          if (!s.generator?.active) {
-            setMessage("POWER NEEDED", 1800, 2);
-            return;
-          }
-          const w = WEAPONS[b.weapon];
-          const owned = s.weapons2[b.weapon]?.owned;
-          const cost = owned ? Math.floor(w.cost * 0.5) : w.cost;
-          if (s.points2 < cost) {
-            setMessage(`Need ${cost} points`, 1800, 2);
-            return;
-          }
-          s.points2 -= cost;
-          soundEngine.buyWeapon();
-          if (!owned) {
-            s.weapons2[b.weapon] = { mag: w.magSize, reserve: w.reserve, owned: true };
-            s.currentWeaponKey2 = b.weapon;
-            setMessage(`Purchased ${w.name}`, 1800, 2);
-          } else {
-            const pw = s.weapons2[b.weapon];
-            pw.mag = w.magSize;
-            pw.reserve = w.reserve;
-            setMessage(`Refilled ${w.name}`, 1800, 2);
-          }
-          syncWeaponUi2();
-          return;
-        }
-      }
-      // ammo box
-      for (const a of s.ammoBoxes) {
-        const dx = a.x - s.player2.x,
-          dy = a.y - s.player2.y;
-        if (dx * dx + dy * dy < 60 * 60) {
-          const cost = 500;
-          if (s.points2 < cost) {
-            setMessage(`Ammo: ${cost} pts`, 1800, 2);
-            return;
-          }
-          s.points2 -= cost;
-          soundEngine.buyWeapon();
-          const w = WEAPONS[s.currentWeaponKey2];
-          const pw = s.weapons2[s.currentWeaponKey2];
-          pw.reserve = w.reserve;
-          setMessage("Max ammo!", 1800, 2);
-          syncWeaponUi2();
-          return;
-        }
-      }
-      // dark ether portal
-      if (s.portalActive && s.portalPos) {
-        const dx = s.portalPos.x - s.player2.x,
-          dy = s.portalPos.y - s.player2.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          s.portalActive = false;
-          s.portalPos = null;
-          s.glowingCrate = null;
-          enterBossMap();
-          return;
-        }
-      }
+      tryInteract2Fn(s, {
+        setMessage,
+        syncWeaponUi: syncWeaponUi2,
+        enterBossMap,
+      });
     }
 
     function damagePlayer2(amt: number) {
@@ -892,317 +525,22 @@ export function ZombieGame() {
     }
 
     function openDoor(o: Obstacle, playerNum: 1 | 2) {
-      const idx = s.obstacles.indexOf(o);
-      if (idx === -1) return;
-      s.obstacles.splice(idx, 1);
-      soundEngine.buyWeapon();
-      if (o.type === "door") {
-        setMessage("CAVE DOOR OPENED", 2200, playerNum);
-        if (playerNum === 1) syncWeaponUi();
-        else syncWeaponUi2();
-        if (!s.toxicZombieSpawned) {
-          const hp = 30 + s.round * 15;
-          s.zombies.push({
-            x: GENERATOR_POS.x - 60,
-            y: GENERATOR_POS.y,
-            hp,
-            maxHp: hp,
-            speed: 45 + s.round * 3,
-            radius: 18,
-            type: "toxic",
-          });
-          s.zombies.push({
-            x: GENERATOR_POS.x + 60,
-            y: GENERATOR_POS.y,
-            hp,
-            maxHp: hp,
-            speed: 45 + s.round * 3,
-            radius: 18,
-            type: "toxic",
-          });
-          s.zombiesAlive += 2;
-          s.toxicZombieSpawned = true;
-        }
-        for (let i = 0; i < 3; i++) spawnGhostZombie();
-      } else if (o.type === "golfDoor") {
-        s.golfDoorOpened = true;
-        setMessage("GOLF ROOM OPENED", 2200, playerNum);
-        if (playerNum === 1) syncWeaponUi();
-        else syncWeaponUi2();
-        if (s.golfBalls.length === 0) {
-          s.golfBalls = [
-            { x: GOLF_ROOM_RECT.w / 2 - 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
-            { x: GOLF_ROOM_RECT.w / 2 + 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
-          ];
-        }
-        if (s.golfTargetBalls.length === 0) {
-          s.golfTargetBalls = [
-            { x: GOLF_ROOM_RECT.w / 2 - 350, y: 180, color: "red", spawned: false },
-            { x: GOLF_ROOM_RECT.w / 2 + 350, y: 180, color: "blue", spawned: false },
-          ];
-        }
-      }
+      openDoorFn(s, o, playerNum, {
+        setMessage,
+        syncWeaponUi: playerNum === 1 ? syncWeaponUi : syncWeaponUi2,
+      });
     }
 
     function tryInteract() {
-      // cave door
-      for (let i = 0; i < s.obstacles.length; i++) {
-        const o = s.obstacles[i];
-        if (o.type !== "door") continue;
-        const dx = o.x + o.w / 2 - s.player.x;
-        const dy = o.y + o.h / 2 - s.player.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          const remaining = CAVE_DOOR_COST - (o.paid || 0);
-          if (s.points < remaining) {
-            setMessage(`Need ${remaining} points`, 1800, 1);
-            return;
-          }
-          s.points -= remaining;
-          openDoor(o, 1);
-          return;
-        }
-      }
-
-      // golf door
-      for (let i = 0; i < s.obstacles.length; i++) {
-        const o = s.obstacles[i];
-        if (o.type !== "golfDoor") continue;
-        const dx = o.x + o.w / 2 - s.player.x;
-        const dy = o.y + o.h / 2 - s.player.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          const remaining = GOLF_DOOR_COST - (o.paid || 0);
-          if (s.points < remaining) {
-            setMessage(`Need ${remaining} points`, 1800, 1);
-            return;
-          }
-          s.points -= remaining;
-          openDoor(o, 1);
-          return;
-        }
-      }
-
-      // buy station (requires power)
-      for (const b of s.buyStations) {
-        const dx = b.x - s.player.x,
-          dy = b.y - s.player.y;
-        if (dx * dx + dy * dy < 70 * 70) {
-          if (!s.generator?.active) {
-            setMessage("POWER NEEDED", 1800, 1);
-            return;
-          }
-          const w = WEAPONS[b.weapon];
-          const owned = s.weapons[b.weapon]?.owned;
-          const cost = owned ? Math.floor(w.cost * 0.5) : w.cost; // refill cost
-          if (s.points < cost) {
-            setMessage(`Need ${cost} points`, 1800, 1);
-            return;
-          }
-          s.points -= cost;
-          soundEngine.buyWeapon();
-          if (!owned) {
-            s.weapons[b.weapon] = { mag: w.magSize, reserve: w.reserve, owned: true };
-            s.currentWeaponKey = b.weapon;
-            setMessage(`Purchased ${w.name}`, 1800, 1);
-          } else {
-            const pw = s.weapons[b.weapon];
-            pw.mag = w.magSize;
-            pw.reserve = w.reserve;
-            setMessage(`Refilled ${w.name}`, 1800, 1);
-          }
-          syncWeaponUi();
-          return;
-        }
-      }
-      // ammo box
-      for (const a of s.ammoBoxes) {
-        const dx = a.x - s.player.x,
-          dy = a.y - s.player.y;
-        if (dx * dx + dy * dy < 60 * 60) {
-          const cost = 500;
-          if (s.points < cost) {
-            setMessage(`Ammo: ${cost} pts`, 1800, 1);
-            return;
-          }
-          s.points -= cost;
-          soundEngine.buyWeapon();
-          const w = WEAPONS[s.currentWeaponKey];
-          const pw = s.weapons[s.currentWeaponKey];
-          pw.reserve = w.reserve;
-          setMessage("Max ammo!", 1800, 1);
-          syncWeaponUi();
-          return;
-        }
-      }
-      // dark ether portal
-      if (s.portalActive && s.portalPos) {
-        const dx = s.portalPos.x - s.player.x,
-          dy = s.portalPos.y - s.player.y;
-        if (dx * dx + dy * dy < 90 * 90) {
-          s.portalActive = false;
-          s.portalPos = null;
-          s.glowingCrate = null;
-          enterBossMap();
-          return;
-        }
-      }
+      tryInteractFn(s, {
+        setMessage,
+        syncWeaponUi,
+        enterBossMap,
+      });
     }
 
     function syncWeaponUi() {
       syncWpnUi1(s, setUiState);
-    }
-
-    function spawnZombie() {
-      // spawn just outside camera view — use random alive player
-      const spawnPlayer =
-        s.gameMode === "split" && s.player2Alive && Math.random() > 0.5 ? s.player2 : s.player;
-      let cx = spawnPlayer.x;
-      let cy = spawnPlayer.y;
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 700;
-        const x = spawnPlayer.x + Math.cos(angle) * dist;
-        const y = spawnPlayer.y + Math.sin(angle) * dist;
-        cx = Math.max(50, Math.min(MAP_W - 50, x));
-        cy = Math.max(50, Math.min(MAP_H - 50, y));
-        if (!isInCave(cx, cy)) break;
-      }
-      if (isInCave(cx, cy)) {
-        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
-      }
-      if (
-        cx >= GOLF_ROOM_RECT.x &&
-        cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w &&
-        cy >= GOLF_ROOM_RECT.y &&
-        cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h
-      ) {
-        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
-      }
-      let type: Zombie["type"] = "walker";
-      const rr = Math.random();
-      if (s.round >= 5 && rr < 0.15) type = "brute";
-      else if (s.round >= 4 && rr < 0.08) type = "brute";
-      else if (s.round >= 3 && rr < 0.22) type = "runner";
-      else if (s.round >= 3 && rr < 0.12) type = "runner";
-      let hp = 30 + s.round * 15;
-      let speed = 50 + s.round * 3;
-      let radius = 16;
-      if (type === "runner") {
-        hp *= 0.6;
-        speed = 130 + s.round * 6;
-        radius = 13;
-      }
-      if (type === "brute") {
-        hp *= 3.5;
-        speed = 45 + s.round * 3;
-        radius = 24;
-      }
-      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type });
-      s.zombiesAlive++;
-    }
-
-    function spawnFireZombie() {
-      let cx = s.player.x;
-      let cy = s.player.y;
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 700;
-        const x = s.player.x + Math.cos(angle) * dist;
-        const y = s.player.y + Math.sin(angle) * dist;
-        cx = Math.max(50, Math.min(MAP_W - 50, x));
-        cy = Math.max(50, Math.min(MAP_H - 50, y));
-        if (!isInCave(cx, cy)) break;
-      }
-      if (isInCave(cx, cy)) {
-        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
-      }
-      if (
-        cx >= GOLF_ROOM_RECT.x &&
-        cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w &&
-        cy >= GOLF_ROOM_RECT.y &&
-        cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h
-      ) {
-        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
-      }
-      const hp = 30 + s.round * 15;
-      const speed = 50 + s.round * 3;
-      const radius = 16;
-      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "fire" });
-      s.zombiesAlive++;
-      s.fireZombieAlive = true;
-    }
-
-    function spawnFireMiniboss() {
-      let cx = s.player.x;
-      let cy = s.player.y;
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 700;
-        const x = s.player.x + Math.cos(angle) * dist;
-        const y = s.player.y + Math.sin(angle) * dist;
-        cx = Math.max(50, Math.min(MAP_W - 50, x));
-        cy = Math.max(50, Math.min(MAP_H - 50, y));
-        if (!isInCave(cx, cy)) break;
-      }
-      if (isInCave(cx, cy)) {
-        cy = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
-      }
-      if (
-        cx >= GOLF_ROOM_RECT.x &&
-        cx <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w &&
-        cy >= GOLF_ROOM_RECT.y &&
-        cy <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h
-      ) {
-        cy = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 100 + Math.random() * 100;
-      }
-      const hp = (30 + s.round * 15) * 3;
-      const speed = 50 + s.round * 3;
-      const radius = 24;
-      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "fireMiniboss" });
-      s.zombiesAlive++;
-      s.minibossAlive = true;
-      s.minibossSpawned = true;
-      s.lastMinibossShot = performance.now();
-      setMessage("FIRE ZOMBIE MINIBOSS!", 2600);
-      soundEngine.bossEnrage();
-    }
-
-    function spawnToxicMiniboss() {
-      // spawn in or near the cave
-      const cx = CAVE_RECT.x + CAVE_RECT.w / 2 + (Math.random() - 0.5) * 300;
-      const cy = CAVE_RECT.y + CAVE_RECT.h / 2 + (Math.random() - 0.5) * 200;
-      const hp = (30 + s.round * 15) * 3;
-      const speed = 45 + s.round * 3;
-      const radius = 22;
-      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "toxicMiniboss" });
-      s.zombiesAlive++;
-      s.toxicMinibossAlive = true;
-      s.toxicMinibossSpawned = true;
-      s.lastToxicMinibossShot = performance.now();
-      setMessage("TOXIC MINIBOSS!", 2600);
-      soundEngine.bossEnrage();
-    }
-
-    function spawnGhostZombie() {
-      const cx = CAVE_RECT.x + 80 + Math.random() * (CAVE_RECT.w - 160);
-      const cy = CAVE_RECT.y + 80 + Math.random() * (CAVE_RECT.h - 160);
-      const hp = 15;
-      const speed = 35 + Math.random() * 20;
-      const radius = 14;
-      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "ghost" });
-      s.zombiesAlive++;
-    }
-
-    function spawnUnderworldZombie() {
-      if (!s.boss) return;
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 30 + Math.random() * 20;
-      const x = s.boss.x + Math.cos(angle) * dist;
-      const y = s.boss.y + Math.sin(angle) * dist;
-      const hp = 20;
-      const speed = 40 + Math.random() * 20;
-      const radius = 14;
-      s.zombies.push({ x, y, hp, maxHp: hp, speed, radius, type: "underworld" });
-      s.zombiesAlive++;
     }
 
     function shoot() {
@@ -1598,7 +936,7 @@ export function ZombieGame() {
             // check if all torches lit → spawn miniboss
             if (s.totemPhase === 0 && s.torches.every((t) => t.lit)) {
               if (!s.minibossSpawned) {
-                spawnFireMiniboss();
+                spawnFireMiniboss(s, setMessage);
               }
             }
             break;
@@ -1701,7 +1039,7 @@ export function ZombieGame() {
             setMessage(`TOTEM ${t.id} AWAKENED`);
             if (s.totemPhase === 2 && t.id === "CAVE") {
               if (!s.toxicMinibossSpawned) {
-                spawnToxicMiniboss();
+                spawnToxicMiniboss(s, setMessage);
               }
             } else if (s.totemPhase === 3) {
               s.totemPhase = 4;
@@ -1807,7 +1145,7 @@ export function ZombieGame() {
       if (!s.started || s.gameOver) return;
 
       // Poll gamepad for player 2
-      pollGamepad();
+      pollGamepadFn(s, { tryReload2, tryInteract2, cycleWeapon2 });
 
       // ─── Player 1 movement (skip if dead) ────────────────────────────────
       moveP1(s, dt, s._resolveObstacles);
@@ -1878,65 +1216,8 @@ export function ZombieGame() {
         }
       }
 
-      // door hold-to-pay-half (player 1)
-      if (s._doorHoldStartP1 > 0 && performance.now() - s._doorHoldStartP1 >= DOOR_HOLD_MS) {
-        s._doorHoldStartP1 = 0;
-        for (const o of s.obstacles) {
-          if (o.type !== "door" && o.type !== "golfDoor") continue;
-          const cost = o.type === "door" ? CAVE_DOOR_COST : GOLF_DOOR_COST;
-          const dx = o.x + o.w / 2 - s.player.x,
-            dy = o.y + o.h / 2 - s.player.y;
-          if (dx * dx + dy * dy < 90 * 90) {
-            const remaining = cost - (o.paid || 0);
-            const half = Math.ceil(remaining / 2);
-            if (s.points >= half) {
-              s.points -= half;
-              o.paid = (o.paid || 0) + half;
-              soundEngine.buyWeapon();
-              if (o.paid >= cost) {
-                openDoor(o, 1);
-              } else {
-                setMessage(`PAID ${o.paid}/${cost} - ${cost - o.paid} LEFT`, 2200, 1);
-              }
-            } else {
-              setMessage(`Need ${half} points for half`, 1800, 1);
-            }
-            break;
-          }
-        }
-      }
-
-      // door hold-to-pay-half (player 2)
-      if (
-        s.gameMode === "split" &&
-        s._doorHoldStartP2 > 0 &&
-        performance.now() - s._doorHoldStartP2 >= DOOR_HOLD_MS
-      ) {
-        s._doorHoldStartP2 = 0;
-        for (const o of s.obstacles) {
-          if (o.type !== "door" && o.type !== "golfDoor") continue;
-          const cost = o.type === "door" ? CAVE_DOOR_COST : GOLF_DOOR_COST;
-          const dx = o.x + o.w / 2 - s.player2.x,
-            dy = o.y + o.h / 2 - s.player2.y;
-          if (dx * dx + dy * dy < 90 * 90) {
-            const remaining = cost - (o.paid || 0);
-            const half = Math.ceil(remaining / 2);
-            if (s.points2 >= half) {
-              s.points2 -= half;
-              o.paid = (o.paid || 0) + half;
-              soundEngine.buyWeapon();
-              if (o.paid >= cost) {
-                openDoor(o, 2);
-              } else {
-                setMessage(`PAID ${o.paid}/${cost} - ${cost - o.paid} LEFT`, 2200, 2);
-              }
-            } else {
-              setMessage(`Need ${half} points for half`, 1800, 2);
-            }
-            break;
-          }
-        }
-      }
+      // door hold-to-pay-half (P1 and P2)
+      updateDoorHolds(s, { setMessage, syncWeaponUi, enterBossMap });
 
       // ─── Revive hold (split-screen only) ──────────────────────────────────
       if (s.gameMode === "split" && s._reviveHoldStart > 0) {
@@ -2345,292 +1626,21 @@ export function ZombieGame() {
         }
       }
 
-      // zombies
-      const caveDoorClosed = s.obstacles.some((o) => o.type === "door");
-      const ghostDespawnList: Zombie[] = [];
-      for (const z of s.zombies) {
-        const target = getZombiePursuitTarget(z);
-        const dx = target.x - z.x,
-          dy = target.y - z.y;
-        const d = Math.hypot(dx, dy) || 1;
-        let dirX = dx / d,
-          dirY = dy / d;
-
-        // Steer around obstacles: if the look-ahead position collides,
-        // rotate the desired direction to the side of the blocker that
-        // is closer to the player (obstacle avoidance).
-        const look = z.radius + 34;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          let blocker: (typeof s.obstacles)[number] | null = null;
-          const tx = z.x + dirX * look,
-            ty = z.y + dirY * look;
-          for (const o of s.obstacles) {
-            if (circleRectOverlap(tx, ty, z.radius + 2, o.x, o.y, o.w, o.h)) {
-              blocker = o;
-              break;
-            }
-          }
-          if (!blocker) break;
-          // Choose rotation side: cross product of dir with vector to obstacle center
-          const ocx = blocker.x + blocker.w / 2,
-            ocy = blocker.y + blocker.h / 2;
-          const cross = dirX * (ocy - z.y) - dirY * (ocx - z.x);
-          const sign = cross > 0 ? -1 : 1;
-          const ang = sign * (Math.PI / 3); // 60° sidestep per attempt
-          const cs = Math.cos(ang),
-            sn = Math.sin(ang);
-          const nx = dirX * cs - dirY * sn;
-          const ny = dirX * sn + dirY * cs;
-          dirX = nx;
-          dirY = ny;
-        }
-
-        z.x += dirX * z.speed * dt;
-        s._resolveObstacles(z, z.radius);
-        z.y += dirY * z.speed * dt;
-        s._resolveObstacles(z, z.radius);
-        // Once the cave door is opened, zombies are allowed to enter the cave.
-        // Before that, keep them outside so they do not clip through the locked entrance.
-        if (caveDoorClosed && isInCave(z.x, z.y)) {
-          z.y = Math.max(20, CAVE_RECT.y - z.radius - 2);
-          z.x = Math.max(
-            CAVE_RECT.x + z.radius + 2,
-            Math.min(CAVE_RECT.x + CAVE_RECT.w - z.radius - 2, z.x),
-          );
-          s._resolveObstacles(z, z.radius);
-        }
-        // ghosts cannot leave the cave — despawn at the doorway
-        if (z.type === "ghost" && z.y < CAVE_RECT.y + 10) {
-          ghostDespawnList.push(z);
-        }
-        const playerDx = s.player.x - z.x,
-          playerDy = s.player.y - z.y;
-        const playerDist = Math.hypot(playerDx, playerDy) || 1;
-        if (s.player.hp > 0 && playerDist < z.radius + s.player.r) {
-          damagePlayer(
-            z.type === "brute"
-              ? 25
-              : z.type === "fireMiniboss"
-                ? 20
-                : z.type === "toxicMiniboss"
-                  ? 18
-                  : z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss"
-                    ? 18
-                    : z.type === "runner"
-                      ? 12
-                      : z.type === "ghost" || z.type === "underworld"
-                        ? 10
-                        : 15,
-          );
-        }
-        // Player 2 collision
-        if (s.gameMode === "split" && s.player2Alive) {
-          const p2dx = s.player2.x - z.x,
-            p2dy = s.player2.y - z.y;
-          const p2dist = Math.hypot(p2dx, p2dy) || 1;
-          if (p2dist < z.radius + s.player2.r) {
-            damagePlayer2(
-              z.type === "brute"
-                ? 25
-                : z.type === "fireMiniboss"
-                  ? 20
-                  : z.type === "toxicMiniboss"
-                    ? 18
-                    : z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss"
-                      ? 18
-                      : z.type === "runner"
-                        ? 12
-                        : z.type === "ghost" || z.type === "underworld"
-                          ? 10
-                          : 15,
-            );
-          }
-        }
-        // fireMiniboss: shoot fireball every 4 seconds (target closest player)
-        if (z.type === "fireMiniboss") {
-          const now = performance.now();
-          if (now - s.lastMinibossShot > 4000) {
-            s.lastMinibossShot = now;
-            // Find closest player for targeting
-            let targetPx = z.x,
-              targetPy = z.y;
-            let targetFound = false;
-            if (s.player.hp > 0) {
-              targetPx = s.player.x;
-              targetPy = s.player.y;
-              targetFound = true;
-            }
-            if (s.gameMode === "split" && s.player2Alive) {
-              const d1 = targetFound ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
-              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
-              if (d2 < d1) {
-                targetPx = s.player2.x;
-                targetPy = s.player2.y;
-              }
-            }
-            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
-            s.bossBullets.push({
-              x: z.x + Math.cos(a) * z.radius,
-              y: z.y + Math.sin(a) * z.radius,
-              vx: Math.cos(a) * 400,
-              vy: Math.sin(a) * 400,
-              life: 3.0,
-              dmg: 20,
-            });
-            s.camera.shake = Math.min(s.camera.shake + 4, 12);
-            // fireball spawn particles
-            for (let k = 0; k < 6; k++) {
-              const pa = Math.random() * Math.PI * 2;
-              s.particles.push({
-                x: z.x + Math.cos(a) * z.radius,
-                y: z.y + Math.sin(a) * z.radius,
-                vx: Math.cos(pa) * 60,
-                vy: Math.sin(pa) * 60,
-                life: 0.3,
-                maxLife: 0.3,
-                color: Math.random() < 0.5 ? "#ff6600" : "#ffaa00",
-                size: 3,
-              });
-            }
-          }
-        }
-        // toxicMiniboss: throw toxic gas cloud every 3 seconds (target closest player)
-        if (z.type === "toxicMiniboss") {
-          const now = performance.now();
-          if (now - s.lastToxicMinibossShot > 3000) {
-            s.lastToxicMinibossShot = now;
-            let targetPx = z.x,
-              targetPy = z.y;
-            if (s.player.hp > 0) {
-              targetPx = s.player.x;
-              targetPy = s.player.y;
-            }
-            if (s.gameMode === "split" && s.player2Alive) {
-              const d1 =
-                s.player.hp > 0 ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
-              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
-              if (d2 < d1) {
-                targetPx = s.player2.x;
-                targetPy = s.player2.y;
-              }
-            }
-            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
-            const throwSpeed = 170;
-            s.toxicProjectiles.push({
-              x: z.x + Math.cos(a) * z.radius,
-              y: z.y + Math.sin(a) * z.radius,
-              vx: Math.cos(a) * throwSpeed,
-              vy: Math.sin(a) * throwSpeed,
-              distTraveled: 0,
-              maxDist: 100,
-            });
-            s.camera.shake = Math.min(s.camera.shake + 3, 10);
-            // throw spawn particles
-            for (let k = 0; k < 5; k++) {
-              const pa = Math.random() * Math.PI * 2;
-              s.particles.push({
-                x: z.x + Math.cos(a) * z.radius,
-                y: z.y + Math.sin(a) * z.radius,
-                vx: Math.cos(pa) * 50,
-                vy: Math.sin(pa) * 50,
-                life: 0.3,
-                maxLife: 0.3,
-                color: Math.random() < 0.5 ? "#33cc33" : "#22aa22",
-                size: 3,
-              });
-            }
-          }
-        }
-        // redPoolMiniboss / bluePoolMiniboss: shoot colored pool ball every 2 seconds (target closest player)
-        if (z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss") {
-          const now = performance.now();
-          if (now - s.lastPoolMinibossShot > 2000) {
-            s.lastPoolMinibossShot = now;
-            let targetPx = z.x,
-              targetPy = z.y;
-            if (s.player.hp > 0) {
-              targetPx = s.player.x;
-              targetPy = s.player.y;
-            }
-            if (s.gameMode === "split" && s.player2Alive) {
-              const d1 =
-                s.player.hp > 0 ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
-              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
-              if (d2 < d1) {
-                targetPx = s.player2.x;
-                targetPy = s.player2.y;
-              }
-            }
-            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
-            const ballColor = z.type === "redPoolMiniboss" ? "#ff3322" : "#3366ff";
-            s.bossBullets.push({
-              x: z.x + Math.cos(a) * z.radius,
-              y: z.y + Math.sin(a) * z.radius,
-              vx: Math.cos(a) * 350,
-              vy: Math.sin(a) * 350,
-              life: 3.0,
-              dmg: 18,
-              color: ballColor,
-            });
-            s.camera.shake = Math.min(s.camera.shake + 4, 12);
-            // pool ball spawn particles
-            for (let k = 0; k < 6; k++) {
-              const pa = Math.random() * Math.PI * 2;
-              s.particles.push({
-                x: z.x + Math.cos(a) * z.radius,
-                y: z.y + Math.sin(a) * z.radius,
-                vx: Math.cos(pa) * 50,
-                vy: Math.sin(pa) * 50,
-                life: 0.3,
-                maxLife: 0.3,
-                color: ballColor,
-                size: 3,
-              });
-            }
-          }
-        }
-      }
-      // remove ghosts that tried to leave the cave
-      for (const g of ghostDespawnList) {
-        const i = s.zombies.indexOf(g);
-        if (i !== -1) {
-          s.zombies.splice(i, 1);
-          s.zombiesAlive--;
-        }
-      }
-      // separate zombies
-      for (let i = 0; i < s.zombies.length; i++) {
-        for (let j = i + 1; j < s.zombies.length; j++) {
-          const a = s.zombies[i],
-            b = s.zombies[j];
-          const dx = b.x - a.x,
-            dy = b.y - a.y;
-          const dist = Math.hypot(dx, dy) || 1;
-          const min = a.radius + b.radius;
-          if (dist < min) {
-            const push = (min - dist) / 2;
-            const nx = dx / dist,
-              ny = dy / dist;
-            a.x -= nx * push;
-            a.y -= ny * push;
-            b.x += nx * push;
-            b.y += ny * push;
-          }
-        }
-      }
+      // zombies (movement, AI, collision, separation)
+      updateZombies(s, dt, { damagePlayer, damagePlayer2, setMessage });
 
       // spawning (disabled in boss mode)
       if (!s.bossMode && s.totemPhase < 5 && s.zombiesToSpawn > 0) {
         s.spawnCooldown -= dt * 1000;
         if (s.spawnCooldown <= 0 && s.zombiesAlive < Math.min(24, 8 + s.round * 2)) {
-          spawnZombie();
+          spawnZombie(s);
           s.zombiesToSpawn--;
           s.spawnCooldown = Math.max(200, 800 - s.round * 40);
         }
       }
       // fire zombie spawn
       if (s.fireZombieToSpawn && !s.fireZombieAlive && !s.bossMode && s.totemPhase < 5) {
-        spawnFireZombie();
+        spawnFireZombie(s);
         s.fireZombieToSpawn = false;
       }
       // ghost zombie spawn in dark cave (only when generator is off and player is inside cave)
@@ -2645,7 +1655,7 @@ export function ZombieGame() {
         s.ghostSpawnTimer += dt;
         if (s.ghostSpawnTimer >= 2.0) {
           s.ghostSpawnTimer = 0;
-          spawnGhostZombie();
+          spawnGhostZombie(s);
         }
       }
       // despawn all ghosts when generator turns on
@@ -2665,7 +1675,7 @@ export function ZombieGame() {
           s.portalSpawnTimer = 0;
           // spawn a fire zombie
           if (!s.fireZombieAlive) {
-            spawnFireZombie();
+            spawnFireZombie(s);
           }
           // spawn a toxic zombie (reuse fire zombie spawning logic with toxic type)
           const toxHp = 30 + s.round * 15;
@@ -2768,7 +1778,7 @@ export function ZombieGame() {
           const underworldCount = s.zombies.filter((z) => z.type === "underworld").length;
           if (now - bs.lastUnderworldSpawn > 2500 && underworldCount < 7) {
             bs.lastUnderworldSpawn = now;
-            spawnUnderworldZombie();
+            spawnUnderworldZombie(s);
           }
         }
 
@@ -3268,7 +2278,7 @@ export function ZombieGame() {
       const dt = Math.min(0.05, (t - (s.lastTime || t)) / 1000);
       s.lastTime = t;
       // Always poll for controllers (needed for menu lobby detection)
-      detectGamepad();
+      detectGamepad(s, setControllerConnected);
       update(dt);
 
       // Jumpscare complete: transition to game over screen
@@ -3364,12 +2374,7 @@ export function ZombieGame() {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
-      window.removeEventListener("keydown", kd);
-      window.removeEventListener("keyup", ku);
-      window.removeEventListener("mouseup", mu);
-      window.removeEventListener("blur", mu);
-      window.removeEventListener("gamepadconnected", onGamepadConnected);
-      window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
+      cleanupInput();
     };
   }, []);
 

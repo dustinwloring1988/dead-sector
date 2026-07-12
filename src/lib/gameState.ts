@@ -341,7 +341,6 @@ export function createInitialState(): GameState {
     started: false,
     gameOver: false,
     lastTime: 0,
-    round0Started: false,
     startTime: 0,
     endTime: 0,
     decals: [],
