@@ -46,14 +46,21 @@ function findSpawnPosition(
 
 // ─── Spawning functions ───────────────────────────────────────────────────────
 
-export function spawnZombie(s: GameState) {
+export function spawnZombie(s: GameState, portalPhase?: boolean) {
   const { x: cx, y: cy } = findSpawnPosition(s, true);
   let type: Zombie["type"] = "walker";
   const rr = Math.random();
-  if (s.round >= 5 && rr < 0.15) type = "brute";
-  else if (s.round >= 4 && rr < 0.08) type = "brute";
-  else if (s.round >= 3 && rr < 0.22) type = "runner";
-  else if (s.round >= 3 && rr < 0.12) type = "runner";
+  if (portalPhase) {
+    if (rr < 0.12) type = "fire";
+    else if (rr < 0.24) type = "toxic";
+    else if (rr < 0.36) type = "runner";
+    else if (rr < 0.42) type = "brute";
+  } else {
+    if (s.round >= 5 && rr < 0.15) type = "brute";
+    else if (s.round >= 4 && rr < 0.08) type = "brute";
+    else if (s.round >= 3 && rr < 0.22) type = "runner";
+    else if (s.round >= 3 && rr < 0.12) type = "runner";
+  }
   let hp = 30 + s.round * 15;
   let speed = 50 + s.round * 3;
   let radius = 16;
@@ -66,6 +73,9 @@ export function spawnZombie(s: GameState) {
     hp *= 3.5;
     speed = 45 + s.round * 3;
     radius = 24;
+  }
+  if (type === "fire" || type === "toxic") {
+    radius = 18;
   }
   s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type });
   s.zombiesAlive++;

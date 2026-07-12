@@ -1104,24 +1104,24 @@ export function createRenderer(deps: RenderDeps) {
       } else if (z.type === "ghost") {
         const ghostPulse = 0.4 + Math.sin(now * 4 + z.x * 0.01) * 0.2;
         const ggrd = ctx.createRadialGradient(sx, cy, z.radius * 0.2, sx, cy, z.radius * 2.2);
-        ggrd.addColorStop(0, `rgba(150,200,255,${0.3 * ghostPulse})`);
-        ggrd.addColorStop(0.5, `rgba(100,150,220,${0.12 * ghostPulse})`);
+        ggrd.addColorStop(0, `rgba(150,200,255,${0.12 * ghostPulse})`);
+        ggrd.addColorStop(0.5, `rgba(100,150,220,${0.05 * ghostPulse})`);
         ggrd.addColorStop(1, "rgba(80,120,200,0)");
         ctx.fillStyle = ggrd;
         ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.2, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = `rgba(180,210,255,${0.35 + ghostPulse * 0.15})`;
+        ctx.fillStyle = `rgba(180,210,255,${0.15 + ghostPulse * 0.08})`;
         ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = `rgba(220,240,255,${0.2 + ghostPulse * 0.1})`;
+        ctx.fillStyle = `rgba(220,240,255,${0.1 + ghostPulse * 0.05})`;
         ctx.beginPath(); ctx.arc(sx, cy, z.radius * 0.5, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = `rgba(150,200,255,${0.5 + ghostPulse * 0.2})`; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(150,200,255,${0.25 + ghostPulse * 0.1})`; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.stroke();
         const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
         const ex = Math.cos(ang) * (z.radius * 0.35); const ey = Math.sin(ang) * (z.radius * 0.35);
         const perpX = -Math.sin(ang) * 3, perpY = Math.cos(ang) * 3;
         const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
-        eglow.addColorStop(0, "rgba(200,230,255,0.9)"); eglow.addColorStop(1, "rgba(100,150,220,0)");
+        eglow.addColorStop(0, "rgba(200,230,255,0.4)"); eglow.addColorStop(1, "rgba(100,150,220,0)");
         ctx.fillStyle = eglow; ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#ddeeff"; ctx.beginPath();
+        ctx.fillStyle = "rgba(220,240,255,0.4)"; ctx.beginPath();
         ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
         ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2); ctx.fill();
       } else if (z.type === "underworld") {

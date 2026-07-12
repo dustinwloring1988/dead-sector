@@ -238,8 +238,6 @@ export type GameState = {
   portalActive: boolean;
   portalPos: null | { x: number; y: number };
   glowingCrate: null | { x: number; y: number; w: number; h: number; hp: number };
-  portalRoundPending: boolean;
-  portalSpawnTimer: number;
 
   // Generator
   generator: CaveGenerator;
@@ -407,8 +405,6 @@ export function createInitialState(): GameState {
     portalActive: false,
     portalPos: null,
     glowingCrate: null,
-    portalRoundPending: false,
-    portalSpawnTimer: 0,
     _doorHoldStartP1: 0,
     _doorHoldStartP2: 0,
     _reviveHoldStart: 0,

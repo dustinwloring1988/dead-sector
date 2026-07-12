@@ -738,7 +738,7 @@ export function ZombieGame() {
       if (z.type === "fire") s.fireZombieAlive = false;
       if (z.type === "fireMiniboss") s.minibossAlive = false;
       if (z.type === "toxicMiniboss") s.toxicMinibossAlive = false;
-      const pts =
+      const basePts =
         (z.type === "brute"
           ? 200
           : z.type === "fireMiniboss"
@@ -759,7 +759,8 @@ export function ZombieGame() {
                           ? 5
                           : z.type === "underworld"
                             ? 10
-                            : 60) + (headshot ? 30 : 0);
+                            : 60);
+      const pts = (s.portalActive && (z.type === "fire" || z.type === "toxic") ? basePts * 3 : basePts) + (headshot ? 30 : 0);
       if (owner === 2) {
         s.points2 += pts;
       } else {
@@ -1633,7 +1634,7 @@ export function ZombieGame() {
       if (!s.bossMode && s.totemPhase < 5 && s.zombiesToSpawn > 0) {
         s.spawnCooldown -= dt * 1000;
         if (s.spawnCooldown <= 0 && s.zombiesAlive < Math.min(24, 8 + s.round * 2)) {
-          spawnZombie(s);
+          spawnZombie(s, s.portalActive);
           s.zombiesToSpawn--;
           s.spawnCooldown = Math.max(200, 800 - s.round * 40);
         }
@@ -1668,75 +1669,10 @@ export function ZombieGame() {
           }
         }
       }
-      // portal phase: spawn fire and toxic zombies every 6s
-      if (s.portalActive && !s.bossMode && s.totemPhase === 4) {
-        s.portalSpawnTimer += dt;
-        if (s.portalSpawnTimer >= 6.0) {
-          s.portalSpawnTimer = 0;
-          // spawn a fire zombie
-          if (!s.fireZombieAlive) {
-            spawnFireZombie(s);
-          }
-          // spawn a toxic zombie (reuse fire zombie spawning logic with toxic type)
-          const toxHp = 30 + s.round * 15;
-          const toxSpeed = 45 + s.round * 3;
-          const toxRadius = 18;
-          let toxX = s.player.x,
-            toxY = s.player.y;
-          for (let attempt = 0; attempt < 12; attempt++) {
-            const angle = Math.random() * Math.PI * 2;
-            const dist = 700;
-            const x = s.player.x + Math.cos(angle) * dist;
-            const y = s.player.y + Math.sin(angle) * dist;
-            toxX = Math.max(50, Math.min(MAP_W - 50, x));
-            toxY = Math.max(50, Math.min(MAP_H - 50, y));
-            if (!isInCave(toxX, toxY)) break;
-          }
-          if (isInCave(toxX, toxY)) {
-            toxY = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
-          }
-          s.zombies.push({
-            x: toxX,
-            y: toxY,
-            hp: toxHp,
-            maxHp: toxHp,
-            speed: toxSpeed,
-            radius: toxRadius,
-            type: "toxic",
-          });
-          s.zombiesAlive++;
-        }
-      }
-      // round continues during portal phase (advance when all zombies cleared)
+      // round end: advance to next round when all zombies cleared
       if (
         !s.bossMode &&
-        s.portalActive &&
-        s.totemPhase === 4 &&
-        s.zombiesAlive === 0 &&
-        s.zombiesToSpawn === 0 &&
-        !s.portalRoundPending
-      ) {
-        s.portalRoundPending = true;
-        setTimeout(() => {
-          s.round++;
-          s.portalRoundPending = false;
-          s.zombiesAlive = 0;
-          s.zombiesToSpawn = Math.floor(6 + s.round * 4 + Math.pow(s.round, 1.4));
-          setMessage(`ROUND ${s.round}`, 2200);
-          soundEngine.roundStart();
-          setUiState((u) => ({
-            ...u,
-            round: s.round,
-            actualRound: s.round,
-            zombiesLeft: s.zombiesToSpawn,
-          }));
-        }, 3000);
-      }
-      if (
-        !s.bossMode &&
-        !s.portalActive &&
         s.totemPhase < 5 &&
-        s.totemPhase !== 4 &&
         s.zombiesToSpawn === 0 &&
         s.zombiesAlive === 0
       ) {
