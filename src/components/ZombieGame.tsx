@@ -5,9 +5,19 @@ import { useGameSettings } from "@/hooks/use-settings";
 import { SettingsModal } from "@/components/SettingsModal";
 import { createRenderer } from "@/lib/gameRendering";
 import { soundEngine } from "@/lib/soundEngine";
-import type { Bullet, Zombie, ToxicGas, ToxicProjectile, Particle, Pickup, Obstacle, CaveGenerator, Weapon } from "@/lib/gameTypes";
+import type { Bullet, Zombie, ToxicGas, ToxicProjectile, Particle, Pickup, Obstacle } from "@/lib/gameTypes";
 import { WEAPONS } from "@/lib/weapons";
 import { TouchControls } from "@/components/TouchControls";
+import { createInitialState } from "@/lib/gameState";
+import type { GameState } from "@/lib/gameState";
+import {
+  movePlayer1 as moveP1, movePlayer2 as moveP2, updatePlayerAim,
+  damagePlayer as dmgPlayer1, damagePlayer2 as dmgPlayer2,
+  syncWeaponUi as syncWpnUi1, syncWeaponUi2 as syncWpnUi2,
+  tryReload as tryReload1, finishReload as finishReload1,
+  tryReload2, finishReload2,
+  cycleWeapon2, updateCamera, updateWalkAnimation,
+} from "@/lib/playerSystem";
 
 // Dead Sector — original round-based top-down zombie shooter.
 // Not affiliated with any existing franchise.
@@ -99,131 +109,7 @@ export function ZombieGame() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const stateRef = useRef({
-    player: { x: MAP_W / 2, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
-    keys: {} as Record<string, boolean>,
-    mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
-    mouse2: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
-    bullets: [] as Bullet[],
-    zombies: [] as Zombie[],
-    particles: [] as Particle[],
-    pickups: [] as Pickup[],
-    points: 500,
-    points2: 500,
-    round: 1,
-    zombiesToSpawn: 0,
-    zombiesAlive: 0,
-    spawnCooldown: 0,
-    lastShot: 0,
-    currentWeaponKey: "pistol" as keyof typeof WEAPONS,
-    weapons: {
-      pistol: { mag: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve, owned: true },
-    } as Record<string, { mag: number; reserve: number; owned: boolean }>,
-    reloadingUntil: 0,
-    lastDamageTime: 0,
-    hitFlash: 0,
-    camera: { x: 0, y: 0, shake: 0 },
-    buyStations: [
-      { x: CAVE_RECT.x + 200, y: CAVE_RECT.y + CAVE_RECT.h / 2, weapon: "smg" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y - 300, weapon: "shotgun" as keyof typeof WEAPONS },
-      { x: 250, y: 225, weapon: "rifle" as keyof typeof WEAPONS },
-      { x: MAP_W - 250, y: 225, weapon: "lmg" as keyof typeof WEAPONS },
-    ],
-    ammoBoxes: [
-      { x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 },
-    ],
-    obstacles: [] as Obstacle[],
-    totems: [] as { x: number; y: number; kills: number; need: number; active: boolean; id: string }[],
-    totemPhase: 0 as 0 | 1 | 2 | 3 | 4 | 5, // 0=torches, 1=generator, 2=cave totem, 3=center, 4=transitioning, 5=boss
-    torches: [] as { x: number; y: number; lit: boolean }[],
-    fireZombieToSpawn: false as boolean,
-    fireZombieAlive: false as boolean,
-    minibossSpawned: false as boolean,
-    minibossAlive: false as boolean,
-    lastMinibossShot: 0 as number,
-    toxicMinibossSpawned: false as boolean,
-    toxicMinibossAlive: false as boolean,
-    lastToxicMinibossShot: 0 as number,
-    toxicProjectiles: [] as ToxicProjectile[],
-    transitionFlash: 0,
-    bossMode: false,
-    boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number; lastUnderworldSpawn: number },
-    bossBullets: [] as { x: number; y: number; vx: number; vy: number; life: number; dmg: number; color?: string }[],
-    lava: [] as { x: number; y: number; w: number; h: number }[],
-    lastLavaDmg: 0,
-    won: false,
-    messageUntil: 0,
-    message: "",
-    messageTarget: 0 as 0 | 1 | 2,
-    started: false,
-    gameOver: false,
-    lastTime: 0,
-    round0Started: false,
-    startTime: 0,
-    endTime: 0,
-    decals: [] as { x: number; y: number; r: number; color: string; alpha: number; kind: "blood" | "scorch" }[],
-    dirtPatches: [] as { x: number; y: number; r: number; c: string }[],
-    grassTufts: [] as { x: number; y: number; c: string }[],
-    groundInit: false,
-    walkPhase: 0,
-    muzzleFlash: 0,
-    kills: 0,
-    shotsFired: 0,
-    shotsHit: 0,
-    gameMode: "single" as "single" | "split",
-    player2: { x: MAP_W / 2 + 100, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
-    camera2: { x: 0, y: 0, shake: 0 },
-    weapons2: {
-      pistol: { mag: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve, owned: true },
-    } as Record<string, { mag: number; reserve: number; owned: boolean }>,
-    currentWeaponKey2: "pistol" as keyof typeof WEAPONS,
-    reloadingUntil2: 0,
-    lastShot2: 0,
-    lastDamageTime2: 0,
-    hitFlash2: 0,
-    muzzleFlash2: 0,
-    walkPhase2: 0,
-    kills2: 0,
-    shotsFired2: 0,
-    shotsHit2: 0,
-    player2Alive: true,
-    controllerIndex: -1,
-    _p2MoveX: 0,
-    _p2MoveY: 0,
-    _vpIsP2: false,
-    showingFireworks: false,
-    fireworksTimer: 0,
-    generator: {
-      x: GENERATOR_POS.x,
-      y: GENERATOR_POS.y,
-      active: false,
-      progressMs: 0,
-    } as CaveGenerator,
-    jumpscareUntil: 0,
-    generatorHintShown: false,
-    golfBalls: [] as { x: number; y: number; vx: number; vy: number; hole: number }[],
-    golfHoles: [
-      { x: GOLF_ROOM_RECT.w / 2 - 300, y: 250 },
-      { x: GOLF_ROOM_RECT.w / 2 + 300, y: 250 },
-    ] as { x: number; y: number }[],
-    golfCompleted: false,
-    golfDoorOpened: false,
-    golfTargetBalls: [] as { x: number; y: number; color: "red" | "blue"; spawned: boolean }[],
-    lastPoolMinibossShot: 0 as number,
-    toxicGas: [] as ToxicGas[],
-    toxicZombieSpawned: false,
-    lastToxicDmg: 0,
-    ghostSpawnTimer: 0,
-    portalActive: false,
-    portalPos: null as null | { x: number; y: number },
-    glowingCrate: null as null | { x: number; y: number; w: number; h: number; hp: number },
-    portalRoundPending: false,
-    portalSpawnTimer: 0,
-    _doorHoldStartP1: 0,
-    _doorHoldStartP2: 0,
-    _reviveHoldStart: 0,
-    _reviveTarget: 0 as 0 | 1 | 2,
-  });
+  const stateRef = useRef<GameState>(createInitialState());
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -706,9 +592,7 @@ export function ZombieGame() {
     }
 
     function syncWeaponUi2() {
-      const w = WEAPONS[s.currentWeaponKey2];
-      const pw = s.weapons2[s.currentWeaponKey2];
-      setUiState((u) => ({ ...u, weaponName2: w.name, mag2: pw.mag, reserve2: pw.reserve, points2: s.points2 }));
+      syncWpnUi2(s, setUiState);
     }
 
     function cycleWeapon2(dir: number) {
@@ -834,54 +718,15 @@ export function ZombieGame() {
     }
 
     function damagePlayer2(amt: number) {
-      const now = performance.now();
-      if (now - s.lastDamageTime2 < 400) return;
-      s.lastDamageTime2 = now;
-      s.player2.hp -= amt;
-      s.hitFlash2 = 1;
-      s.camera2.shake = Math.min(s.camera2.shake + 8, 16);
-      soundEngine.playerDamage();
-      if (s.player2.hp <= 0) {
-        s.player2.hp = 0;
-        s.player2Alive = false;
-        const inCave = isInCave(s.player2.x, s.player2.y) && !s.generator.active;
-        if (inCave) {
-          s.camera2.shake = 20;
-        }
-        haptic([80, 60, 120, 60, 200]);
-        // Check if both players are dead
-        if (!s.player2Alive && s.player.hp <= 0) {
-          s.gameOver = true;
-          soundEngine.setMusic("menu");
-          setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
-        }
-      } else {
-        haptic([30, 20, 40]);
-      }
-      setUiState((u) => ({ ...u, hp2: Math.max(0, s.player2.hp) }));
+      dmgPlayer2(s, amt, haptic, isInCave, setUiState);
     }
 
     function tryReload() {
-      const key = s.currentWeaponKey;
-      const w = WEAPONS[key];
-      const pw = s.weapons[key];
-      if (!pw || pw.mag >= w.magSize || pw.reserve <= 0) return;
-      if (performance.now() < s.reloadingUntil) return;
-      s.reloadingUntil = performance.now() + w.reloadMs;
-      soundEngine.reload();
-      haptic([15, 40, 25]);
-      setUiState((u) => ({ ...u, reloading: true }));
+      tryReload1(s, haptic, setUiState);
     }
 
     function finishReload() {
-      const key = s.currentWeaponKey;
-      const w = WEAPONS[key];
-      const pw = s.weapons[key];
-      const need = w.magSize - pw.mag;
-      const take = Math.min(need, pw.reserve);
-      pw.mag += take;
-      pw.reserve -= take;
-      setUiState((u) => ({ ...u, mag: pw.mag, reserve: pw.reserve, reloading: false }));
+      finishReload1(s, setUiState);
     }
 
     function openDoor(o: Obstacle, playerNum: 1 | 2) {
@@ -1005,9 +850,7 @@ export function ZombieGame() {
     }
 
     function syncWeaponUi() {
-      const w = WEAPONS[s.currentWeaponKey];
-      const pw = s.weapons[s.currentWeaponKey];
-      setUiState((u) => ({ ...u, weaponName: w.name, mag: pw.mag, reserve: pw.reserve, points: s.points }));
+      syncWpnUi1(s, setUiState);
     }
 
     function spawnZombie() {
@@ -1191,36 +1034,7 @@ export function ZombieGame() {
     }
 
     function damagePlayer(amt: number) {
-      const now = performance.now();
-      if (now - s.lastDamageTime < 400) return;
-      s.lastDamageTime = now;
-      s.player.hp -= amt;
-      s.hitFlash = 1;
-      s.camera.shake = Math.min(s.camera.shake + 8, 16);
-      soundEngine.playerDamage();
-      if (s.player.hp <= 0) {
-        s.player.hp = 0;
-        const inCave = isInCave(s.player.x, s.player.y) && !s.generator.active;
-        if (inCave) {
-          s.jumpscareUntil = performance.now() + 1500;
-          soundEngine.jumpscare();
-          s.camera.shake = 20;
-        }
-        haptic([80, 60, 120, 60, 200]);
-        // In split-screen, only game over if both players are dead
-        if (s.gameMode === "split" && s.player2Alive) {
-          // P2 still alive, game continues
-        } else {
-          s.gameOver = true;
-          soundEngine.setMusic("menu");
-          if (!inCave) {
-            setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
-          }
-        }
-      } else {
-        haptic([30, 20, 40]);
-      }
-      setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
+      dmgPlayer1(s, amt, haptic, isInCave, setUiState);
     }
 
     function explodeBarrel(bx: number, by: number, isToxic = false) {
@@ -1588,76 +1402,12 @@ export function ZombieGame() {
       pollGamepad();
 
       // ─── Player 1 movement (skip if dead) ────────────────────────────────
-      if (s.player.hp > 0) {
-      // movement
-      let mx = 0, my = 0;
-      if (s.keys["w"] || s.keys["arrowup"]) my -= 1;
-      if (s.keys["s"] || s.keys["arrowdown"]) my += 1;
-      if (s.keys["a"] || s.keys["arrowleft"]) mx -= 1;
-      if (s.keys["d"] || s.keys["arrowright"]) mx += 1;
-      const len = Math.hypot(mx, my);
-      if (len > 0) { mx /= len; my /= len; }
-      const sp = s.player.speed * dt;
-      // move X then resolve, then Y then resolve, for smooth wall sliding
-      s.player.x = Math.max(20, Math.min(MAP_W - 20, s.player.x + mx * sp));
-      (s as any)._resolveObstacles(s.player, s.player.r);
-      s.player.y = Math.max(20, Math.min(MAP_H - 20, s.player.y + my * sp));
-      (s as any)._resolveObstacles(s.player, s.player.r);
-      // glowing crate collision
-      if (s.glowingCrate) {
-        const gc = s.glowingCrate;
-        const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
-        const dx = s.player.x - gcCx, dy = s.player.y - gcCy;
-        const dist = Math.hypot(dx, dy);
-        const minDist = s.player.r + Math.max(gc.w, gc.h) / 2;
-        if (dist < minDist && dist > 0) {
-          const push = minDist - dist;
-          s.player.x += (dx / dist) * push;
-          s.player.y += (dy / dist) * push;
-        }
-      }
-      // boss arena bounds
-      if (s.bossMode) {
-        const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
-        const half = BOSS_ARENA_SIZE / 2 - s.player.r;
-        s.player.x = Math.max(cx - half, Math.min(cx + half, s.player.x));
-        s.player.y = Math.max(cy - half, Math.min(cy + half, s.player.y));
-      }
-      } // end P1 alive check
+      moveP1(s, dt, (s as any)._resolveObstacles);
 
       // ─── Player 2 movement (split-screen) ──────────────────────────────────
+      moveP2(s, dt, (s as any)._resolveObstacles);
       if (s.gameMode === "split" && s.player2Alive) {
-        const p2mx = s._p2MoveX;
-        const p2my = s._p2MoveY;
-        const p2len = Math.hypot(p2mx, p2my);
-        let p2dx = 0, p2dy = 0;
-        if (p2len > 0) { p2dx = p2mx / p2len; p2dy = p2my / p2len; }
-        const p2sp = s.player2.speed * dt;
-        s.player2.x = Math.max(20, Math.min(MAP_W - 20, s.player2.x + p2dx * p2sp));
-        (s as any)._resolveObstacles(s.player2, s.player2.r);
-        s.player2.y = Math.max(20, Math.min(MAP_H - 20, s.player2.y + p2dy * p2sp));
-        (s as any)._resolveObstacles(s.player2, s.player2.r);
-        // glowing crate collision
-        if (s.glowingCrate) {
-          const gc = s.glowingCrate;
-          const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
-          const dx2 = s.player2.x - gcCx, dy2 = s.player2.y - gcCy;
-          const dist2 = Math.hypot(dx2, dy2);
-          const minDist2 = s.player2.r + Math.max(gc.w, gc.h) / 2;
-          if (dist2 < minDist2 && dist2 > 0) {
-            const push2 = minDist2 - dist2;
-            s.player2.x += (dx2 / dist2) * push2;
-            s.player2.y += (dy2 / dist2) * push2;
-          }
-        }
-        // boss arena bounds for P2
-        if (s.bossMode) {
-          const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
-          const half = BOSS_ARENA_SIZE / 2 - s.player2.r;
-          s.player2.x = Math.max(cx - half, Math.min(cx + half, s.player2.x));
-          s.player2.y = Math.max(cy - half, Math.min(cy + half, s.player2.y));
-        }
-        // P2 shooting
+        const p2len = Math.hypot(s._p2MoveX, s._p2MoveY);
         if (s.mouse2.down) {
           const w2 = WEAPONS[s.currentWeaponKey2];
           if (w2.auto) shoot2();
@@ -1676,12 +1426,7 @@ export function ZombieGame() {
       }
 
       // world mouse (account for zoom)
-      const zoom = settingsRef.current.cameraZoom === "zoomed" ? 1.4 : 1;
-      const px = s.player.x - s.camera.x;
-      const py = s.player.y - s.camera.y;
-      s.mouse.worldX = (s.mouse.x - px) / zoom + px + s.camera.x;
-      s.mouse.worldY = (s.mouse.y - py) / zoom + py + s.camera.y;
-      s.player.angle = Math.atan2(s.mouse.worldY - s.player.y, s.mouse.worldX - s.player.x);
+      updatePlayerAim(s, settingsRef.current.cameraZoom);
 
       // cave generator: stay close for 20s to restore power
       if (s.generator && !s.generator.active) {
@@ -2768,39 +2513,9 @@ export function ZombieGame() {
         if (p.life <= 0) s.particles.splice(i, 1);
       }
 
-      // camera (player 1)
-      const vpW = s.gameMode === "split" ? canvas.width / 2 : canvas.width;
-      const targetX = s.player.x - vpW / 2;
-      const targetY = s.player.y - canvas.height / 2;
-      s.camera.x += (targetX - s.camera.x) * 0.15;
-      s.camera.y += (targetY - s.camera.y) * 0.15;
-      if (s.camera.shake > 0) {
-        s.camera.x += (Math.random() - 0.5) * s.camera.shake;
-        s.camera.y += (Math.random() - 0.5) * s.camera.shake;
-        s.camera.shake *= 0.85;
-        if (s.camera.shake < 0.1) s.camera.shake = 0;
-      }
-      s.hitFlash *= 0.9;
-      if (s.player.hp > 0) {
-        s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
-        // walk bob when moving
-        const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
-          s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
-        if (isMoving) s.walkPhase += dt * 12;
-      }
-      // Camera 2 (player 2)
-      if (s.gameMode === "split") {
-        const t2x = s.player2.x - vpW / 2;
-        const t2y = s.player2.y - canvas.height / 2;
-        s.camera2.x += (t2x - s.camera2.x) * 0.15;
-        s.camera2.y += (t2y - s.camera2.y) * 0.15;
-        if (s.camera2.shake > 0) {
-          s.camera2.x += (Math.random() - 0.5) * s.camera2.shake;
-          s.camera2.y += (Math.random() - 0.5) * s.camera2.shake;
-          s.camera2.shake *= 0.85;
-          if (s.camera2.shake < 0.1) s.camera2.shake = 0;
-        }
-      }
+      // camera & walk animation
+      updateCamera(s, canvas.width, canvas.height);
+      updateWalkAnimation(s, dt);
     }
 
 
