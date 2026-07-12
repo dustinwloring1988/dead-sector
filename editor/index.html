@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dead Sector - Map Editor</title>
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <h1>Dead Sector Map Editor</h1>
+        <button id="btn-import" class="btn">Import Map</button>
+        <button id="btn-export" class="btn btn-primary" disabled>Export Map</button>
+        <button id="btn-new" class="btn">New Map</button>
+        <button id="btn-reset-view" class="btn">Reset View</button>
+      </div>
+      <div class="toolbar-right">
+        <label>Zoom: <span id="zoom-display">100%</span></label>
+        <label>Cursor: <span id="cursor-pos">0, 0</span></label>
+      </div>
+    </header>
+
+    <div id="workspace">
+      <aside id="sidebar">
+        <div class="sidebar-section">
+          <h3>Tools</h3>
+          <div id="tool-buttons">
+            <button class="tool-btn active" data-tool="select" title="Select & Move (V)">Select</button>
+            <button class="tool-btn" data-tool="pan" title="Pan (H)">Pan</button>
+            <button class="tool-btn" data-tool="add-rect" title="Add Rectangle (R)">+ Rect</button>
+            <button class="tool-btn" data-tool="add-point" title="Add Point (P)">+ Point</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>Layer Visibility</h3>
+          <div id="layers"></div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>Properties</h3>
+          <div id="properties-panel">
+            <p class="hint">Select an element to edit its properties</p>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>Add Entity</h3>
+          <div id="add-entity-panel">
+            <label>Type</label>
+            <select id="add-type">
+              <optgroup label="Obstacles">
+                <option value="rock">Rock</option>
+                <option value="crate">Crate</option>
+                <option value="fence">Fence</option>
+                <option value="barrel">Barrel</option>
+                <option value="toxicBarrel">Toxic Barrel</option>
+                <option value="caveWall">Cave Wall</option>
+                <option value="door">Door</option>
+                <option value="golfDoor">Golf Door</option>
+              </optgroup>
+              <optgroup label="Points">
+                <option value="buyStation">Buy Station</option>
+                <option value="ammoBox">Ammo Box</option>
+                <option value="golfHole">Golf Hole</option>
+                <option value="torch">Torch</option>
+                <option value="caveLight">Cave Light</option>
+              </optgroup>
+              <optgroup label="Rectangles">
+                <option value="bossLava">Boss Lava</option>
+              </optgroup>
+            </select>
+            <button id="btn-add-entity" class="btn">Add to Map</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>Map Settings</h3>
+          <div id="map-settings">
+            <label>Width <input type="number" id="set-width" min="100" step="100" /></label>
+            <label>Height <input type="number" id="set-height" min="100" step="100" /></label>
+            <label>Surface Center Y <input type="number" id="set-surfaceCY" min="0" step="50" /></label>
+            <label>Boss Arena Size <input type="number" id="set-bossArena" min="0" step="50" /></label>
+          </div>
+        </div>
+      </aside>
+
+      <main id="canvas-container">
+        <canvas id="map-canvas"></canvas>
+      </main>
+    </div>
+  </div>
+
+  <script src="editor.js"></script>
+</body>
+</html>
