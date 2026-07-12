@@ -171,3 +171,108 @@
     text-shadow: 0 0 30px rgba(201, 48, 48, 0.6), 0 0 60px rgba(201, 48, 48, 0.3);
   }
 }
+
+@keyframes menuTitleFlicker {
+  0%, 94%, 100% { opacity: 1; }
+  95% { opacity: 0.78; }
+  96% { opacity: 1; }
+  97% { opacity: 0.88; }
+}
+
+.start-screen {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(122, 82, 22, 0.22), transparent 38%),
+    linear-gradient(135deg, rgba(7, 10, 10, 0.94), rgba(0, 0, 0, 0.9));
+}
+
+.start-screen__scanlines {
+  opacity: 0.18;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 3px,
+    rgba(255, 255, 255, 0.06) 4px
+  );
+}
+
+.start-screen__glow {
+  background: radial-gradient(ellipse, rgba(201, 162, 74, 0.16), transparent 68%);
+  filter: blur(12px);
+}
+
+.start-screen__panel {
+  animation: fadeSlideIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.start-screen__title {
+  color: #d6b557;
+  text-shadow: 0 0 22px rgba(201, 162, 74, 0.38), 0 3px 0 #4a3512;
+  animation: menuTitleFlicker 8s steps(1, end) infinite;
+}
+
+.start-screen__action {
+  min-height: 92px;
+  border: 1px solid rgba(201, 162, 74, 0.4);
+  background: rgba(201, 162, 74, 0.045);
+  padding: 1rem;
+  color: #d9c887;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.start-screen__action:hover {
+  transform: translateY(-2px);
+  border-color: #e0b85a;
+  background: rgba(201, 162, 74, 0.14);
+  color: #f4d77b;
+}
+
+.start-screen__action:focus-visible {
+  outline: 2px solid #f0cf6d;
+  outline-offset: 3px;
+}
+
+.start-screen__action small {
+  display: block;
+  margin-top: 0.6rem;
+  color: #8d866f;
+  font-size: 0.65rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+}
+
+.start-screen__action--primary {
+  border-color: #c9a24a;
+  background: linear-gradient(135deg, #c9a24a, #92712b);
+  color: #171207;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.26), 0 7px 24px rgba(0, 0, 0, 0.22);
+}
+
+.start-screen__action--primary small {
+  color: rgba(23, 18, 7, 0.72);
+}
+
+.start-screen__action--primary:hover {
+  border-color: #f0cf6d;
+  background: linear-gradient(135deg, #e0b85a, #a68133);
+  color: #0c0a05;
+}
+
+.start-screen__info-card {
+  border: 1px solid rgba(201, 162, 74, 0.3);
+  background: rgba(0, 0, 0, 0.22);
+  padding: 1.25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-screen__panel,
+  .start-screen__title {
+    animation: none;
+  }
+
+  .start-screen__action {
+    transition: none;
+  }
+}

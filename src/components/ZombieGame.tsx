@@ -4,6 +4,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useGameSettings } from "@/hooks/use-settings";
 import { SettingsModal } from "@/components/SettingsModal";
 import { GameOverScreen } from "@/components/GameOverScreen";
+import { StartScreen } from "@/components/StartScreen";
 import { createRenderer } from "@/lib/gameRendering";
 import { soundEngine } from "@/lib/soundEngine";
 import type { Obstacle, Zombie } from "@/lib/gameTypes";
@@ -1659,6 +1660,20 @@ export function ZombieGame() {
       // zombies (movement, AI, collision, separation)
       updateZombies(s, dt, { damagePlayer, damagePlayer2, setMessage });
 
+      // The cave totem must always lead into the toxic miniboss encounter.
+      // Keep this as a progression guard in case the kill that completes the
+      // totem occurs while another state transition is being processed.
+      const caveTotem = s.totems.find((totem) => totem.id === "CAVE");
+      if (
+        s.totemPhase === 2 &&
+        caveTotem &&
+        !caveTotem.active &&
+        !s.toxicMinibossSpawned &&
+        !s.toxicMinibossAlive
+      ) {
+        spawnToxicMiniboss(s, setMessage);
+      }
+
       // spawning (disabled in boss mode)
       if (!s.bossMode && s.totemPhase < 5 && s.zombiesToSpawn > 0) {
         s.spawnCooldown -= dt * 1000;
@@ -2556,6 +2571,28 @@ export function ZombieGame() {
 
       {/* Start screen */}
       {!uiState.started && (
+        <StartScreen
+          menuMode={menuMode}
+          isMobile={isMobile}
+          controllerConnected={controllerConnected}
+          onStartSingle={() => {
+            stateRef.current.gameMode = "single";
+            setGameMode("single");
+            startGameRef.current();
+          }}
+          onStartSplit={() => {
+            stateRef.current.gameMode = "split";
+            setGameMode("split");
+            startGameRef.current();
+          }}
+          onSetMenuMode={setMenuMode}
+          onOpenSettings={() => setSettingsOpen(true)}
+          showHelp={showHelp}
+        />
+      )}
+
+      {/* Previous start screen can be previewed explicitly during development. */}
+      {globalThis.location?.hash === "#legacy-start-screen" && !uiState.started && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70">
           <div className="text-center font-mono max-w-2xl px-6">
             <h1 className="text-6xl md:text-7xl font-bold text-[#c9a24a] tracking-widest drop-shadow-[0_4px_10px_rgba(201,162,74,0.3)]">

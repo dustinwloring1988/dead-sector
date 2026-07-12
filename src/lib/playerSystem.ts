@@ -228,6 +228,7 @@ export function syncWeaponUi(s: GameState, setUiState: SetUiState) {
     mag: pw.mag,
     reserve: pw.reserve,
     points: s.points,
+    points2: s.points2,
   }));
 }
 
@@ -239,6 +240,7 @@ export function syncWeaponUi2(s: GameState, setUiState: SetUiState) {
     weaponName2: w.name,
     mag2: pw.mag,
     reserve2: pw.reserve,
+    points: s.points,
     points2: s.points2,
   }));
 }
