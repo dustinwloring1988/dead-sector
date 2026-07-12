@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type {} from "@tanstack/react-start";
 
-const BASE_URL = "https://dead-sector.lovable.app";
+const BASE_URL = process.env.VITE_SITE_URL ?? "http://localhost:3000";
 
 export const Route = createFileRoute("/sitemap.xml")({
   server: {

@@ -7,10 +7,9 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 
 function NotFoundComponent() {
   return (
@@ -37,10 +36,6 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
-  useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
-  }, [error]);
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -79,12 +74,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Dead Sector — Top-Down Zombie Survival" },
       { name: "description", content: "A top-down shooter game inspired by Black Ops Zombies, featuring wave-based survival." },
-      { name: "author", content: "Lovable" },
+      { name: "author", content: "Dead Sector" },
       { property: "og:title", content: "Dead Sector — Top-Down Zombie Survival" },
       { property: "og:description", content: "A top-down shooter game inspired by Black Ops Zombies, featuring wave-based survival." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Dead Sector — Top-Down Zombie Survival" },
       { name: "twitter:description", content: "A top-down shooter game inspired by Black Ops Zombies, featuring wave-based survival." },
       { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/4iZDNPExCFV9ZhfPbZyL956Dbuv2/social-images/social-1783093763004-Generated_Image_July_03,_2026_-_11_48AM.webp" },
