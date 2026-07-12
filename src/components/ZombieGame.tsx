@@ -3,6 +3,7 @@ import { Settings } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGameSettings } from "@/hooks/use-settings";
 import { SettingsModal } from "@/components/SettingsModal";
+import { GameOverScreen } from "@/components/GameOverScreen";
 import { createRenderer } from "@/lib/gameRendering";
 import { soundEngine } from "@/lib/soundEngine";
 import type { Obstacle, Zombie } from "@/lib/gameTypes";
@@ -111,6 +112,9 @@ export function ZombieGame() {
     weaponName2: WEAPONS.pistol.name,
     reloading2: false,
     kills2: 0,
+    shotsFired2: 0,
+    shotsHit2: 0,
+    won: false,
   });
   const [showHelp, setShowHelp] = useState(true);
   const isMobileWidth = useIsMobile();
@@ -501,6 +505,15 @@ export function ZombieGame() {
       soundEngine.shoot(key);
       s.camera2.shake = Math.min(s.camera2.shake + 3, 12);
       s.muzzleFlash2 = 1;
+      for (let i = 0; i < 4; i++) {
+        s.particles.push({
+          x: s.player2.x + Math.cos(baseAngle) * 22,
+          y: s.player2.y + Math.sin(baseAngle) * 22,
+          vx: Math.cos(baseAngle) * (190 + Math.random() * 120) + (Math.random() - 0.5) * 70,
+          vy: Math.sin(baseAngle) * (190 + Math.random() * 120) + (Math.random() - 0.5) * 70,
+          life: 0.09, maxLife: 0.09, color: "#ffe09a", size: 3 + Math.random() * 2,
+        });
+      }
       syncWeaponUi2();
     }
 
@@ -1132,6 +1145,17 @@ export function ZombieGame() {
         chargeTimer: 0,
         lastUnderworldSpawn: performance.now() + 2500,
       };
+      // Visual-only arrival shockwave; the fight does not begin with extra damage.
+      for (let i = 0; i < 44; i++) {
+        const a = (i / 44) * Math.PI * 2;
+        s.particles.push({
+          x: cx, y: cy - half + 60,
+          vx: Math.cos(a) * (130 + Math.random() * 220),
+          vy: Math.sin(a) * (130 + Math.random() * 220),
+          life: 0.9 + Math.random() * 0.35, maxLife: 1.25,
+          color: i % 3 === 0 ? "#ffd15a" : "#d21f16", size: 3 + Math.random() * 4,
+        });
+      }
       setMessage("BOSS: THE HARBINGER", 3000);
       setUiState((u) => ({
         ...u,
@@ -1601,7 +1625,12 @@ export function ZombieGame() {
               if (b.owner === 2) s.shotsHit2++;
               else s.shotsHit++;
               soundEngine.zombieHit();
-              for (let k = 0; k < 5; k++) {
+              const hitColor = z.type === "toxic" || z.type === "toxicMiniboss"
+                ? "#73e85d"
+                : z.type === "fire" || z.type === "fireMiniboss"
+                  ? "#ff8a35"
+                  : z.type === "ghost" ? "#b9e4ff" : z.type === "underworld" ? "#c78cff" : "#b51c1c";
+              for (let k = 0; k < 8; k++) {
                 const a = Math.random() * Math.PI * 2;
                 s.particles.push({
                   x: b.x,
@@ -1610,8 +1639,8 @@ export function ZombieGame() {
                   vy: Math.sin(a) * 80,
                   life: 0.3,
                   maxLife: 0.3,
-                  color: "#a11",
-                  size: 2 + Math.random() * 2,
+                  color: k < 2 ? "#ffe6a6" : hitColor,
+                  size: 2 + Math.random() * 3,
                 });
               }
               if (z.hp <= 0) {
@@ -1694,17 +1723,17 @@ export function ZombieGame() {
           soundEngine.bossEnrage();
           setMessage("THE HARBINGER ENRAGES!", 2500);
           s.camera.shake = 12;
-          for (let i = 0; i < 30; i++) {
+          for (let i = 0; i < 46; i++) {
             const aa = Math.random() * Math.PI * 2;
             s.particles.push({
               x: bs.x,
               y: bs.y,
               vx: Math.cos(aa) * 200,
               vy: Math.sin(aa) * 200,
-              life: 0.8,
-              maxLife: 0.8,
+              life: 0.8 + Math.random() * 0.45,
+              maxLife: 1.25,
               color: Math.random() < 0.5 ? "#ff2200" : "#ffaa00",
-              size: 4,
+              size: 3 + Math.random() * 4,
             });
           }
         }
@@ -1884,6 +1913,15 @@ export function ZombieGame() {
                 vy: Math.sin(aa) * (bs.phase === 2 ? 540 : 480),
                 life: 2.2,
                 dmg: bs.phase === 2 ? 26 : 22,
+              });
+            }
+            for (let i = 0; i < 16; i++) {
+              const aa = a + (Math.random() - 0.5) * 1.2;
+              s.particles.push({
+                x: bs.x + Math.cos(a) * bs.radius, y: bs.y + Math.sin(a) * bs.radius,
+                vx: Math.cos(aa) * (100 + Math.random() * 180), vy: Math.sin(aa) * (100 + Math.random() * 180),
+                life: 0.28 + Math.random() * 0.2, maxLife: 0.48,
+                color: bs.phase === 2 ? "#ff4a22" : "#ffbd55", size: 2 + Math.random() * 3,
               });
             }
             s.camera.shake = Math.min(s.camera.shake + 6, 16);
@@ -2225,9 +2263,14 @@ export function ZombieGame() {
           ...u,
           gameOver: true,
           hp: 0,
+          points: s.points,
           kills: s.kills,
           shotsFired: s.shotsFired,
           shotsHit: s.shotsHit,
+          points2: s.points2,
+          kills2: s.kills2,
+          shotsFired2: s.shotsFired2,
+          shotsHit2: s.shotsHit2,
         }));
       }
 
@@ -2297,6 +2340,11 @@ export function ZombieGame() {
             kills: s.kills,
             shotsFired: s.shotsFired,
             shotsHit: s.shotsHit,
+            points2: s.points2,
+            kills2: s.kills2,
+            shotsFired2: s.shotsFired2,
+            shotsHit2: s.shotsHit2,
+            won: s.won,
             zombiesLeft: 0,
           }));
         }
@@ -2644,115 +2692,21 @@ export function ZombieGame() {
 
       {/* Game over / Victory */}
       {uiState.gameOver && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div
-            className="text-center font-mono max-w-md w-full mx-4"
-            style={{ animation: "fadeSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards" }}
-          >
-            {uiState.hp > 0 ? (
-              <>
-                <div className="border-2 border-[#c9a24a]/40 bg-black/60 p-8 rounded-sm">
-                  <h1
-                    className="text-7xl font-bold text-[#c9a24a] tracking-widest"
-                    style={{ animation: "pulseGlow 2s ease-in-out infinite" }}
-                  >
-                    VICTORY
-                  </h1>
-                  <p className="text-[#a89060] mt-3 text-xl tracking-wider">
-                    THE HARBINGER HAS FALLEN
-                  </p>
-                  {uiState.elapsedMs < 600000 && (
-                    <div className="mt-3 inline-block px-4 py-1 bg-[#c9a24a]/20 border border-[#c9a24a]/50 rounded-sm">
-                      <span className="text-[#c9a24a] font-bold text-lg tracking-widest">
-                        {uiState.elapsedMs < 480000
-                          ? "S-RANK"
-                          : uiState.elapsedMs < 600000
-                            ? "A-RANK"
-                            : ""}
-                      </span>
-                    </div>
-                  )}
-                  <div className="mt-6 space-y-2 text-sm">
-                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
-                      <span className="text-[#8a8a6a]">POINTS</span>
-                      <span className="text-[#c9a24a] font-bold">{uiState.points}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
-                      <span className="text-[#8a8a6a]">TIME</span>
-                      <span className="text-[#c9a24a] font-bold tabular-nums">
-                        {formatTime(uiState.elapsedMs)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
-                      <span className="text-[#8a8a6a]">KILLS</span>
-                      <span className="text-[#c9a24a] font-bold">{uiState.kills}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#8a8a6a]">ACCURACY</span>
-                      <span className="text-[#c9a24a] font-bold">
-                        {uiState.shotsFired > 0
-                          ? Math.round((uiState.shotsHit / uiState.shotsFired) * 100)
-                          : 0}
-                        %
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="border-2 border-[#c93030]/40 bg-black/60 p-8 rounded-sm">
-                  <h1
-                    className="text-7xl font-bold text-[#c93030] tracking-widest"
-                    style={{ animation: "pulseGlowRed 2s ease-in-out infinite" }}
-                  >
-                    YOU DIED
-                  </h1>
-                  <p className="text-[#a89060] mt-3 text-xl tracking-wider">
-                    SURVIVED {uiState.actualRound} ROUND{uiState.actualRound !== 1 ? "S" : ""}
-                  </p>
-                  <div className="mt-6 space-y-2 text-sm">
-                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
-                      <span className="text-[#8a8a6a]">POINTS</span>
-                      <span className="text-[#c9a24a] font-bold">{uiState.points}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
-                      <span className="text-[#8a8a6a]">TIME</span>
-                      <span className="text-[#c9a24a] font-bold tabular-nums">
-                        {formatTime(uiState.elapsedMs)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
-                      <span className="text-[#8a8a6a]">KILLS</span>
-                      <span className="text-[#c9a24a] font-bold">{uiState.kills}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#8a8a6a]">ACCURACY</span>
-                      <span className="text-[#c9a24a] font-bold">
-                        {uiState.shotsFired > 0
-                          ? Math.round((uiState.shotsHit / uiState.shotsFired) * 100)
-                          : 0}
-                        %
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-            <button
-              onClick={restart}
-              className="mt-8 w-64 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest border border-[#c9a24a] hover:bg-[#e0b85a] transition-colors"
-            >
-              REDEPLOY
-            </button>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="mt-4 w-64 px-10 py-3 bg-transparent text-[#c9a24a] font-bold tracking-widest border border-[#c9a24a] hover:bg-[#c9a24a]/10 transition-colors"
-            >
-              SETTINGS
-            </button>
-          </div>
-        </div>
+        <GameOverScreen
+          won={uiState.won}
+          players={
+            gameMode === "split"
+              ? [
+                  { label: "PLAYER 1", points: uiState.points, kills: uiState.kills, shotsFired: uiState.shotsFired, shotsHit: uiState.shotsHit },
+                  { label: "PLAYER 2", points: uiState.points2, kills: uiState.kills2, shotsFired: uiState.shotsFired2, shotsHit: uiState.shotsHit2 },
+                ]
+              : [{ label: "PLAYER 1", points: uiState.points, kills: uiState.kills, shotsFired: uiState.shotsFired, shotsHit: uiState.shotsHit }]
+          }
+          elapsedMs={uiState.elapsedMs}
+          actualRound={uiState.actualRound}
+          onRestart={restart}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
       )}
 
       {isMobile && uiState.started && !uiState.gameOver && (

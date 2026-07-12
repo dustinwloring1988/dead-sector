@@ -153,9 +153,14 @@ export function damagePlayer(
           ...u,
           gameOver: true,
           hp: 0,
+          points: s.points,
           kills: s.kills,
           shotsFired: s.shotsFired,
           shotsHit: s.shotsHit,
+          points2: s.points2,
+          kills2: s.kills2,
+          shotsFired2: s.shotsFired2,
+          shotsHit2: s.shotsHit2,
         }));
       }
     }
@@ -196,9 +201,14 @@ export function damagePlayer2(
         ...u,
         gameOver: true,
         hp: 0,
+        points: s.points,
         kills: s.kills,
         shotsFired: s.shotsFired,
         shotsHit: s.shotsHit,
+        points2: s.points2,
+        kills2: s.kills2,
+        shotsFired2: s.shotsFired2,
+        shotsHit2: s.shotsHit2,
       }));
     }
   } else {

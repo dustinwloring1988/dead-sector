@@ -961,15 +961,53 @@ export function createRenderer(deps: RenderDeps) {
       const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
       if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
       const basicZombie = z.type === "walker" || z.type === "runner" || z.type === "brute";
-      const basicLit = !basicZombie || isInFlashlight(z.x, z.y);
+      // Basic zombies are only obscured in the unpowered cave.  Fade their
+      // bodies out over the first stretch of the entrance so crossing the
+      // threshold does not abruptly switch them to eyes-only.
+      const caveIsDark = !s.generator?.active;
+      const inCaveEntrance =
+        z.x >= CAVE_ENTRY.x - z.radius &&
+        z.x <= CAVE_ENTRY.x + CAVE_ENTRY.w + z.radius;
+      const doorwayFadeDepth = 140;
+      const basicBodyVisibility =
+        basicZombie && caveIsDark && isInCave(z.x, z.y)
+          ? isInFlashlight(z.x, z.y)
+            ? 1
+            : inCaveEntrance
+              ? Math.max(0, Math.min(1, (CAVE_RECT.y + doorwayFadeDepth - z.y) / doorwayFadeDepth))
+              : 0
+          : 1;
+      const basicLit = !basicZombie || basicBodyVisibility > 0.01;
       if (basicLit) {
+        ctx.save();
+        ctx.globalAlpha = basicZombie ? basicBodyVisibility : 1;
         ctx.fillStyle = "rgba(0,0,0,0.45)";
         ctx.beginPath();
         ctx.ellipse(sx + 3, sy + z.radius * 0.5, z.radius + 2, (z.radius + 2) * 0.45, 0, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
       const bob = Math.sin(now * 5 + (z.x + z.y) * 0.01) * 1.5;
       const cy = sy + bob;
+      // Each base enemy gets a readable motion signature before its body is drawn.
+      if (z.type === "runner" && basicBodyVisibility > 0.01) {
+        ctx.strokeStyle = `rgba(255,180,50,${0.2 + Math.sin(now * 12) * 0.1})`;
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 2; i++) {
+          ctx.beginPath(); ctx.moveTo(sx - z.radius - 7 - i * 5, cy - 5 + i * 8); ctx.lineTo(sx - z.radius + 2, cy - 5 + i * 8); ctx.stroke();
+        }
+      } else if (z.type === "brute" && basicBodyVisibility > 0.01) {
+        const throb = z.radius + 4 + Math.sin(now * 4) * 2;
+        ctx.strokeStyle = "rgba(180,40,25,0.35)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(sx, cy, throb, 0, Math.PI * 2); ctx.stroke();
+      } else if (z.type === "ghost") {
+        const veil = ctx.createRadialGradient(sx, cy, 0, sx, cy, z.radius * 2.4);
+        veil.addColorStop(0, "rgba(180,230,255,0.28)"); veil.addColorStop(1, "rgba(120,190,255,0)");
+        ctx.fillStyle = veil; ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.4, 0, Math.PI * 2); ctx.fill();
+      } else if (z.type === "underworld") {
+        ctx.strokeStyle = `rgba(190,110,255,${0.25 + Math.sin(now * 6) * 0.12})`; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(sx, cy, z.radius + 7, now * 2, now * 2 + Math.PI * 1.45); ctx.stroke();
+      }
       if (z.type === "fire") {
         const fpulse = 0.5 + Math.sin(now * 8) * 0.3;
         const fgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 2.5);
@@ -1187,12 +1225,14 @@ export function createRenderer(deps: RenderDeps) {
         ctx.fillStyle = "#fff"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center";
         ctx.fillText(isRed ? "RED BALL" : "BLUE BALL", sx, sy - z.radius - 22);
       } else {
-        const litByFlashlight = isInFlashlight(z.x, z.y);
-        if (litByFlashlight) {
+        if (basicBodyVisibility > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = basicBodyVisibility;
           const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
           ctx.fillStyle = color; ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = "rgba(120,20,20,0.35)"; ctx.beginPath(); ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2); ctx.fill();
           ctx.strokeStyle = "#7a0d0d"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.stroke();
+          ctx.restore();
         }
         const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
         const ex = Math.cos(ang) * (z.radius * 0.4); const ey = Math.sin(ang) * (z.radius * 0.4);
@@ -1205,9 +1245,12 @@ export function createRenderer(deps: RenderDeps) {
         ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2); ctx.fill();
       }
       if (z.hp < z.maxHp && basicLit) {
+        ctx.save();
+        ctx.globalAlpha = basicZombie ? basicBodyVisibility : 1;
         ctx.fillStyle = "#000"; ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
         ctx.fillStyle = z.type === "fire" || z.type === "fireMiniboss" ? "#ff6600" : z.type === "toxic" || z.type === "toxicMiniboss" ? "#33cc33" : z.type === "ghost" ? "#8ab4f8" : z.type === "underworld" ? "#aa66ff" : z.type === "redPoolMiniboss" ? "#ff3322" : z.type === "bluePoolMiniboss" ? "#3366ff" : "#c93030";
         ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
+        ctx.restore();
       }
     }
   }
@@ -1273,9 +1316,15 @@ export function createRenderer(deps: RenderDeps) {
   function drawParticles() {
     for (const p of s.particles) {
       const sx = p.x - s.camera.x, sy = p.y - s.camera.y;
-      ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+      const alpha = Math.max(0, p.life / p.maxLife);
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = p.color;
-      ctx.fillRect(sx - p.size / 2, sy - p.size / 2, p.size, p.size);
+      ctx.beginPath(); ctx.arc(sx, sy, p.size / 2, 0, Math.PI * 2); ctx.fill();
+      if (p.size >= 4) {
+        ctx.globalAlpha = alpha * 0.45;
+        ctx.strokeStyle = p.color; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(sx, sy, p.size, 0, Math.PI * 2); ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1526,6 +1575,13 @@ export function createRenderer(deps: RenderDeps) {
     const sx = bs.x - s.camera.x + shx, sy = bs.y - s.camera.y + shy;
     const pulse = 0.7 + Math.sin(performance.now() / 200) * 0.3;
     const p2 = bs.phase === 2;
+    // Warning rings make the boss's territory feel dangerous even in peripheral vision.
+    for (let i = 0; i < (p2 ? 3 : 2); i++) {
+      const ringR = bs.radius + 18 + i * 13 + Math.sin(performance.now() / 180 + i) * 3;
+      ctx.strokeStyle = p2 ? `rgba(255,35,20,${0.42 - i * 0.09})` : `rgba(255,150,45,${0.32 - i * 0.08})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(sx, sy, ringR, performance.now() / 500 + i, performance.now() / 500 + i + Math.PI * 1.45); ctx.stroke();
+    }
     if (bs.charging) {
       const sprintPulse = 0.5 + Math.sin(performance.now() / 60) * 0.5;
       ctx.fillStyle = `rgba(255,80,0,${sprintPulse * 0.5})`;
@@ -1567,11 +1623,22 @@ export function createRenderer(deps: RenderDeps) {
     ctx.fillStyle = p2 ? "#ff2020" : "#c93030"; ctx.fillRect(barX, 50, barW * (bs.hp / bs.maxHp), 14);
     ctx.fillStyle = "#e0c090"; ctx.font = "bold 12px monospace"; ctx.textAlign = "center";
     ctx.fillText(p2 ? "THE HARBINGER - ENRAGED" : "THE HARBINGER", canvas.width / 2, 44);
+    if (bs.charging) {
+      ctx.fillStyle = "#ffcf72"; ctx.font = "bold 13px monospace";
+      ctx.fillText("INFERNAL CHARGE", canvas.width / 2, 86);
+    }
   }
 
   function drawBossBullets() {
     for (const b of s.bossBullets) {
       const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
+      const speed = Math.hypot(b.vx, b.vy) || 1;
+      const tail = b.color ? 22 : 30;
+      const tx = sx - (b.vx / speed) * tail, ty = sy - (b.vy / speed) * tail;
+      const trail = ctx.createLinearGradient(tx, ty, sx, sy);
+      trail.addColorStop(0, "rgba(255,60,20,0)"); trail.addColorStop(1, b.color || "rgba(255,120,40,0.85)");
+      ctx.strokeStyle = trail; ctx.lineWidth = b.color ? 3 : 4;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(sx, sy); ctx.stroke();
       if (b.color) {
         ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.beginPath(); ctx.arc(sx - 1, sy - 1, 2, 0, Math.PI * 2); ctx.fill();

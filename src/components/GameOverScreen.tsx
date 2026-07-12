@@ -1,9 +1,14 @@
-type GameOverScreenProps = {
-  won: boolean;
+type PlayerScore = {
+  label: string;
   points: number;
   kills: number;
   shotsFired: number;
   shotsHit: number;
+};
+
+type GameOverScreenProps = {
+  won: boolean;
+  players: PlayerScore[];
   elapsedMs: number;
   actualRound: number;
   onRestart: () => void;
@@ -20,19 +25,43 @@ const formatTime = (ms: number) => {
 
 export function GameOverScreen({
   won,
-  points,
-  kills,
-  shotsFired,
-  shotsHit,
+  players,
   elapsedMs,
   actualRound,
   onRestart,
   onOpenSettings,
 }: GameOverScreenProps) {
+  const scoreBorder = won ? "border-[#3a3a1a]" : "border-[#3a1a1a]";
+  const renderScorecard = (player: PlayerScore) => (
+    <div className={`min-w-0 flex-1 border ${scoreBorder} bg-black/30 p-4 text-left`}>
+      {players.length > 1 && (
+        <h2 className="mb-3 text-center text-sm font-bold tracking-widest text-[#a89060]">
+          {player.label}
+        </h2>
+      )}
+      <div className="space-y-2 text-sm">
+        <div className={`flex justify-between border-b ${scoreBorder} pb-2`}>
+          <span className="text-[#8a8a6a]">POINTS</span>
+          <span className="font-bold text-[#c9a24a]">{player.points}</span>
+        </div>
+        <div className={`flex justify-between border-b ${scoreBorder} pb-2`}>
+          <span className="text-[#8a8a6a]">KILLS</span>
+          <span className="font-bold text-[#c9a24a]">{player.kills}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#8a8a6a]">ACCURACY</span>
+          <span className="font-bold text-[#c9a24a]">
+            {player.shotsFired > 0 ? Math.round((player.shotsHit / player.shotsFired) * 100) : 0}%
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
       <div
-        className="text-center font-mono max-w-md w-full mx-4"
+        className={`text-center font-mono w-full mx-4 ${players.length > 1 ? "max-w-3xl" : "max-w-md"}`}
         style={{ animation: "fadeSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards" }}
       >
         {won ? (
@@ -44,9 +73,7 @@ export function GameOverScreen({
               >
                 VICTORY
               </h1>
-              <p className="text-[#a89060] mt-3 text-xl tracking-wider">
-                THE HARBINGER HAS FALLEN
-              </p>
+              <p className="text-[#a89060] mt-3 text-xl tracking-wider">THE HARBINGER HAS FALLEN</p>
               {elapsedMs < 600000 && (
                 <div className="mt-3 inline-block px-4 py-1 bg-[#c9a24a]/20 border border-[#c9a24a]/50 rounded-sm">
                   <span className="text-[#c9a24a] font-bold text-lg tracking-widest">
@@ -54,24 +81,19 @@ export function GameOverScreen({
                   </span>
                 </div>
               )}
-              <div className="mt-6 space-y-2 text-sm">
-                <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
-                  <span className="text-[#8a8a6a]">POINTS</span>
-                  <span className="text-[#c9a24a] font-bold">{points}</span>
-                </div>
-                <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
+              <div className="mt-6 text-sm">
+                <div className="mb-3 flex justify-between border-b border-[#3a3a1a] pb-2">
                   <span className="text-[#8a8a6a]">TIME</span>
-                  <span className="text-[#c9a24a] font-bold tabular-nums">{formatTime(elapsedMs)}</span>
-                </div>
-                <div className="flex justify-between border-b border-[#3a3a1a] pb-2">
-                  <span className="text-[#8a8a6a]">KILLS</span>
-                  <span className="text-[#c9a24a] font-bold">{kills}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#8a8a6a]">ACCURACY</span>
-                  <span className="text-[#c9a24a] font-bold">
-                    {shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0}%
+                  <span className="text-[#c9a24a] font-bold tabular-nums">
+                    {formatTime(elapsedMs)}
                   </span>
+                </div>
+                <div className={`flex gap-3 ${players.length > 1 ? "flex-col sm:flex-row" : ""}`}>
+                  {players.map((player) => (
+                    <div key={player.label} className="contents">
+                      {renderScorecard(player)}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -88,24 +110,19 @@ export function GameOverScreen({
               <p className="text-[#a89060] mt-3 text-xl tracking-wider">
                 SURVIVED {actualRound} ROUND{actualRound !== 1 ? "S" : ""}
               </p>
-              <div className="mt-6 space-y-2 text-sm">
-                <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
-                  <span className="text-[#8a8a6a]">POINTS</span>
-                  <span className="text-[#c9a24a] font-bold">{points}</span>
-                </div>
-                <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
+              <div className="mt-6 text-sm">
+                <div className="mb-3 flex justify-between border-b border-[#3a1a1a] pb-2">
                   <span className="text-[#8a8a6a]">TIME</span>
-                  <span className="text-[#c9a24a] font-bold tabular-nums">{formatTime(elapsedMs)}</span>
-                </div>
-                <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
-                  <span className="text-[#8a8a6a]">KILLS</span>
-                  <span className="text-[#c9a24a] font-bold">{kills}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#8a8a6a]">ACCURACY</span>
-                  <span className="text-[#c9a24a] font-bold">
-                    {shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0}%
+                  <span className="text-[#c9a24a] font-bold tabular-nums">
+                    {formatTime(elapsedMs)}
                   </span>
+                </div>
+                <div className={`flex gap-3 ${players.length > 1 ? "flex-col sm:flex-row" : ""}`}>
+                  {players.map((player) => (
+                    <div key={player.label} className="contents">
+                      {renderScorecard(player)}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
