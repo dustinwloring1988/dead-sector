@@ -1,25 +1,57 @@
-import type { Bullet, Zombie, ToxicGas, ToxicProjectile, Particle, Pickup, Obstacle, CaveGenerator } from "@/lib/gameTypes";
+import type {
+  Bullet,
+  Zombie,
+  ToxicGas,
+  ToxicProjectile,
+  Particle,
+  Pickup,
+  Obstacle,
+  CaveGenerator,
+} from "@/lib/gameTypes";
 import { WEAPONS } from "@/lib/weapons";
 import {
-  MAP_W, SURFACE_CENTER_Y, CAVE_RECT, CAVE_ENTRY,
-  GENERATOR_POS, GOLF_ROOM_RECT, GOLF_ENTRY,
+  MAP_W,
+  SURFACE_CENTER_Y,
+  CAVE_RECT,
+  CAVE_ENTRY,
+  GENERATOR_POS,
+  GOLF_ROOM_RECT,
+  GOLF_ENTRY,
   TORCH_POSITIONS,
 } from "@/lib/mapData";
 
 // ─── Derived position constants ───────────────────────────────────────────────
 const CAVE_ENTRY_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y + 64 };
 const CAVE_EXIT_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y - 44 };
-const GOLF_ENTRY_TARGET = { x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 22 };
-const GOLF_EXIT_TARGET = { x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 44 };
+const GOLF_ENTRY_TARGET = {
+  x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2,
+  y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 22,
+};
+const GOLF_EXIT_TARGET = {
+  x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2,
+  y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 44,
+};
 
 // ─── Player type ──────────────────────────────────────────────────────────────
 export type Player = {
-  x: number; y: number; r: number;
-  hp: number; maxHp: number; speed: number; angle: number;
+  x: number;
+  y: number;
+  r: number;
+  hp: number;
+  maxHp: number;
+  speed: number;
+  angle: number;
 };
 
 // ─── Totem / Torch types ──────────────────────────────────────────────────────
-export type Totem = { x: number; y: number; kills: number; need: number; active: boolean; id: string };
+export type Totem = {
+  x: number;
+  y: number;
+  kills: number;
+  need: number;
+  active: boolean;
+  id: string;
+};
 export type Torch = { x: number; y: number; lit: boolean };
 
 // ─── Weapon inventory entry ───────────────────────────────────────────────────
@@ -27,12 +59,22 @@ export type WeaponInventory = { mag: number; reserve: number; owned: boolean };
 
 // ─── Boss type ────────────────────────────────────────────────────────────────
 export type Boss = {
-  x: number; y: number; hp: number; maxHp: number;
-  speed: number; radius: number; lastShot: number;
-  phase: number; lastCharge: number;
-  charging: boolean; chargeDirX: number; chargeDirY: number;
-  chargeTimer: number; lastUnderworldSpawn: number;
-  hitFlash?: number; hitShake?: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  speed: number;
+  radius: number;
+  lastShot: number;
+  phase: number;
+  lastCharge: number;
+  charging: boolean;
+  chargeDirX: number;
+  chargeDirY: number;
+  chargeTimer: number;
+  lastUnderworldSpawn: number;
+  hitFlash?: number;
+  hitShake?: number;
 };
 
 // ─── Buy station / Ammo box ──────────────────────────────────────────────────
@@ -45,14 +87,59 @@ export type GolfHole = { x: number; y: number };
 export type GolfTargetBall = { x: number; y: number; color: "red" | "blue"; spawned: boolean };
 
 // ─── Boss bullet ──────────────────────────────────────────────────────────────
-export type BossBullet = { x: number; y: number; vx: number; vy: number; life: number; dmg: number; color?: string };
+export type BossBullet = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  dmg: number;
+  color?: string;
+};
 
 // ─── Decal ────────────────────────────────────────────────────────────────────
-export type Decal = { x: number; y: number; r: number; color: string; alpha: number; kind: "blood" | "scorch" };
+export type Decal = {
+  x: number;
+  y: number;
+  r: number;
+  color: string;
+  alpha: number;
+  kind: "blood" | "scorch";
+};
 
 // ─── Ground decoration ────────────────────────────────────────────────────────
 export type DirtPatch = { x: number; y: number; r: number; c: string };
 export type GrassTuft = { x: number; y: number; c: string };
+
+// ─── React HUD state (mirrors the useState shape in ZombieGame) ──────────────
+export type UiState = {
+  hp: number;
+  points: number;
+  round: number;
+  zombiesLeft: number;
+  mag: number;
+  reserve: number;
+  weaponName: string;
+  reloading: boolean;
+  gameOver: boolean;
+  started: boolean;
+  message: string;
+  elapsedMs: number;
+  kills: number;
+  shotsFired: number;
+  shotsHit: number;
+  showingFireworks: boolean;
+  actualRound: number;
+  hp2: number;
+  points2: number;
+  mag2: number;
+  reserve2: number;
+  weaponName2: string;
+  reloading2: boolean;
+  kills2: number;
+};
+
+export type SetUiState = (fn: (prev: UiState) => UiState) => void;
 
 // ─── Full game state ──────────────────────────────────────────────────────────
 export type GameState = {
@@ -188,6 +275,11 @@ export type GameState = {
   jumpscareUntil: number;
   showingFireworks: boolean;
   fireworksTimer: number;
+
+  // Collision helpers (attached at runtime)
+  _resolveObstacles: (pos: { x: number; y: number }, r: number) => void;
+  _bulletHitsObstacle: (bx: number, by: number) => boolean;
+  _findHitObstacle: (bx: number, by: number) => number;
 };
 
 // ─── Initial state factory ────────────────────────────────────────────────────
@@ -222,9 +314,7 @@ export function createInitialState(): GameState {
       { x: 250, y: 225, weapon: "rifle" },
       { x: MAP_W - 250, y: 225, weapon: "lmg" },
     ],
-    ammoBoxes: [
-      { x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 },
-    ],
+    ammoBoxes: [{ x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 }],
     obstacles: [],
     totems: [],
     totemPhase: 0,
@@ -264,7 +354,15 @@ export function createInitialState(): GameState {
     shotsFired: 0,
     shotsHit: 0,
     gameMode: "single",
-    player2: { x: MAP_W / 2 + 100, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
+    player2: {
+      x: MAP_W / 2 + 100,
+      y: SURFACE_CENTER_Y,
+      r: 14,
+      hp: 100,
+      maxHp: 100,
+      speed: 260,
+      angle: 0,
+    },
     camera2: { x: 0, y: 0, shake: 0 },
     weapons2: {
       pistol: { mag: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve, owned: true },
@@ -316,5 +414,8 @@ export function createInitialState(): GameState {
     _doorHoldStartP2: 0,
     _reviveHoldStart: 0,
     _reviveTarget: 0,
+    _resolveObstacles: () => {},
+    _bulletHitsObstacle: () => false,
+    _findHitObstacle: () => -1,
   };
 }

@@ -1,22 +1,28 @@
-import type { GameState } from "@/lib/gameState";
+import type { GameState, SetUiState } from "@/lib/gameState";
 import { WEAPONS } from "@/lib/weapons";
 import { soundEngine } from "@/lib/soundEngine";
-import {
-  MAP_W, MAP_H, SURFACE_CENTER_Y, BOSS_ARENA_SIZE,
-} from "@/lib/mapData";
+import { MAP_W, MAP_H, SURFACE_CENTER_Y, BOSS_ARENA_SIZE } from "@/lib/mapData";
 
 // ─── Movement ─────────────────────────────────────────────────────────────────
 
-export function movePlayer1(s: GameState, dt: number, resolveObstacles: (pos: { x: number; y: number }, r: number) => void) {
+export function movePlayer1(
+  s: GameState,
+  dt: number,
+  resolveObstacles: (pos: { x: number; y: number }, r: number) => void,
+) {
   if (s.player.hp <= 0) return;
 
-  let mx = 0, my = 0;
+  let mx = 0,
+    my = 0;
   if (s.keys["w"] || s.keys["arrowup"]) my -= 1;
   if (s.keys["s"] || s.keys["arrowdown"]) my += 1;
   if (s.keys["a"] || s.keys["arrowleft"]) mx -= 1;
   if (s.keys["d"] || s.keys["arrowright"]) mx += 1;
   const len = Math.hypot(mx, my);
-  if (len > 0) { mx /= len; my /= len; }
+  if (len > 0) {
+    mx /= len;
+    my /= len;
+  }
 
   const sp = s.player.speed * dt;
   s.player.x = Math.max(20, Math.min(MAP_W - 20, s.player.x + mx * sp));
@@ -27,8 +33,10 @@ export function movePlayer1(s: GameState, dt: number, resolveObstacles: (pos: { 
   // Glowing crate collision
   if (s.glowingCrate) {
     const gc = s.glowingCrate;
-    const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
-    const dx = s.player.x - gcCx, dy = s.player.y - gcCy;
+    const gcCx = gc.x + gc.w / 2,
+      gcCy = gc.y + gc.h / 2;
+    const dx = s.player.x - gcCx,
+      dy = s.player.y - gcCy;
     const dist = Math.hypot(dx, dy);
     const minDist = s.player.r + Math.max(gc.w, gc.h) / 2;
     if (dist < minDist && dist > 0) {
@@ -40,21 +48,30 @@ export function movePlayer1(s: GameState, dt: number, resolveObstacles: (pos: { 
 
   // Boss arena bounds
   if (s.bossMode) {
-    const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
+    const cx = MAP_W / 2,
+      cy = SURFACE_CENTER_Y;
     const half = BOSS_ARENA_SIZE / 2 - s.player.r;
     s.player.x = Math.max(cx - half, Math.min(cx + half, s.player.x));
     s.player.y = Math.max(cy - half, Math.min(cy + half, s.player.y));
   }
 }
 
-export function movePlayer2(s: GameState, dt: number, resolveObstacles: (pos: { x: number; y: number }, r: number) => void) {
+export function movePlayer2(
+  s: GameState,
+  dt: number,
+  resolveObstacles: (pos: { x: number; y: number }, r: number) => void,
+) {
   if (s.gameMode !== "split" || !s.player2Alive) return;
 
   const p2mx = s._p2MoveX;
   const p2my = s._p2MoveY;
   const p2len = Math.hypot(p2mx, p2my);
-  let p2dx = 0, p2dy = 0;
-  if (p2len > 0) { p2dx = p2mx / p2len; p2dy = p2my / p2len; }
+  let p2dx = 0,
+    p2dy = 0;
+  if (p2len > 0) {
+    p2dx = p2mx / p2len;
+    p2dy = p2my / p2len;
+  }
 
   const p2sp = s.player2.speed * dt;
   s.player2.x = Math.max(20, Math.min(MAP_W - 20, s.player2.x + p2dx * p2sp));
@@ -65,8 +82,10 @@ export function movePlayer2(s: GameState, dt: number, resolveObstacles: (pos: { 
   // Glowing crate collision
   if (s.glowingCrate) {
     const gc = s.glowingCrate;
-    const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
-    const dx2 = s.player2.x - gcCx, dy2 = s.player2.y - gcCy;
+    const gcCx = gc.x + gc.w / 2,
+      gcCy = gc.y + gc.h / 2;
+    const dx2 = s.player2.x - gcCx,
+      dy2 = s.player2.y - gcCy;
     const dist2 = Math.hypot(dx2, dy2);
     const minDist2 = s.player2.r + Math.max(gc.w, gc.h) / 2;
     if (dist2 < minDist2 && dist2 > 0) {
@@ -78,7 +97,8 @@ export function movePlayer2(s: GameState, dt: number, resolveObstacles: (pos: { 
 
   // Boss arena bounds for P2
   if (s.bossMode) {
-    const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
+    const cx = MAP_W / 2,
+      cy = SURFACE_CENTER_Y;
     const half = BOSS_ARENA_SIZE / 2 - s.player2.r;
     s.player2.x = Math.max(cx - half, Math.min(cx + half, s.player2.x));
     s.player2.y = Math.max(cy - half, Math.min(cy + half, s.player2.y));
@@ -103,7 +123,7 @@ export function damagePlayer(
   amt: number,
   haptic: (pattern: number | number[]) => void,
   isInCave: (x: number, y: number) => boolean,
-  setUiState: (fn: (u: any) => any) => void,
+  setUiState: SetUiState,
 ) {
   const now = performance.now();
   if (now - s.lastDamageTime < 400) return;
@@ -129,13 +149,20 @@ export function damagePlayer(
       s.gameOver = true;
       soundEngine.setMusic("menu");
       if (!inCave) {
-        setUiState((u: any) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+        setUiState((u) => ({
+          ...u,
+          gameOver: true,
+          hp: 0,
+          kills: s.kills,
+          shotsFired: s.shotsFired,
+          shotsHit: s.shotsHit,
+        }));
       }
     }
   } else {
     haptic([30, 20, 40]);
   }
-  setUiState((u: any) => ({ ...u, hp: Math.max(0, s.player.hp) }));
+  setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
 }
 
 export function damagePlayer2(
@@ -143,7 +170,7 @@ export function damagePlayer2(
   amt: number,
   haptic: (pattern: number | number[]) => void,
   isInCave: (x: number, y: number) => boolean,
-  setUiState: (fn: (u: any) => any) => void,
+  setUiState: SetUiState,
 ) {
   const now = performance.now();
   if (now - s.lastDamageTime2 < 400) return;
@@ -165,32 +192,45 @@ export function damagePlayer2(
     if (!s.player2Alive && s.player.hp <= 0) {
       s.gameOver = true;
       soundEngine.setMusic("menu");
-      setUiState((u: any) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+      setUiState((u) => ({
+        ...u,
+        gameOver: true,
+        hp: 0,
+        kills: s.kills,
+        shotsFired: s.shotsFired,
+        shotsHit: s.shotsHit,
+      }));
     }
   } else {
     haptic([30, 20, 40]);
   }
-  setUiState((u: any) => ({ ...u, hp2: Math.max(0, s.player2.hp) }));
+  setUiState((u) => ({ ...u, hp2: Math.max(0, s.player2.hp) }));
 }
 
 // ─── Weapon UI Sync ───────────────────────────────────────────────────────────
 
-export function syncWeaponUi(
-  s: GameState,
-  setUiState: (fn: (u: any) => any) => void,
-) {
+export function syncWeaponUi(s: GameState, setUiState: SetUiState) {
   const w = WEAPONS[s.currentWeaponKey];
   const pw = s.weapons[s.currentWeaponKey];
-  setUiState((u: any) => ({ ...u, weaponName: w.name, mag: pw.mag, reserve: pw.reserve, points: s.points }));
+  setUiState((u) => ({
+    ...u,
+    weaponName: w.name,
+    mag: pw.mag,
+    reserve: pw.reserve,
+    points: s.points,
+  }));
 }
 
-export function syncWeaponUi2(
-  s: GameState,
-  setUiState: (fn: (u: any) => any) => void,
-) {
+export function syncWeaponUi2(s: GameState, setUiState: SetUiState) {
   const w = WEAPONS[s.currentWeaponKey2];
   const pw = s.weapons2[s.currentWeaponKey2];
-  setUiState((u: any) => ({ ...u, weaponName2: w.name, mag2: pw.mag, reserve2: pw.reserve, points2: s.points2 }));
+  setUiState((u) => ({
+    ...u,
+    weaponName2: w.name,
+    mag2: pw.mag,
+    reserve2: pw.reserve,
+    points2: s.points2,
+  }));
 }
 
 // ─── Reload ───────────────────────────────────────────────────────────────────
@@ -198,7 +238,7 @@ export function syncWeaponUi2(
 export function tryReload(
   s: GameState,
   haptic: (pattern: number | number[]) => void,
-  setUiState: (fn: (u: any) => any) => void,
+  setUiState: SetUiState,
 ) {
   const key = s.currentWeaponKey;
   const w = WEAPONS[key];
@@ -208,13 +248,10 @@ export function tryReload(
   s.reloadingUntil = performance.now() + w.reloadMs;
   soundEngine.reload();
   haptic([15, 40, 25]);
-  setUiState((u: any) => ({ ...u, reloading: true }));
+  setUiState((u) => ({ ...u, reloading: true }));
 }
 
-export function finishReload(
-  s: GameState,
-  setUiState: (fn: (u: any) => any) => void,
-) {
+export function finishReload(s: GameState, setUiState: SetUiState) {
   const key = s.currentWeaponKey;
   const w = WEAPONS[key];
   const pw = s.weapons[key];
@@ -222,13 +259,13 @@ export function finishReload(
   const take = Math.min(need, pw.reserve);
   pw.mag += take;
   pw.reserve -= take;
-  setUiState((u: any) => ({ ...u, mag: pw.mag, reserve: pw.reserve, reloading: false }));
+  setUiState((u) => ({ ...u, mag: pw.mag, reserve: pw.reserve, reloading: false }));
 }
 
 export function tryReload2(
   s: GameState,
   haptic: (pattern: number | number[]) => void,
-  setUiState: (fn: (u: any) => any) => void,
+  setUiState: SetUiState,
 ) {
   const key = s.currentWeaponKey2;
   const w = WEAPONS[key];
@@ -238,13 +275,10 @@ export function tryReload2(
   s.reloadingUntil2 = performance.now() + w.reloadMs;
   soundEngine.reload();
   haptic([15, 40, 25]);
-  setUiState((u: any) => ({ ...u, reloading2: true }));
+  setUiState((u) => ({ ...u, reloading2: true }));
 }
 
-export function finishReload2(
-  s: GameState,
-  setUiState: (fn: (u: any) => any) => void,
-) {
+export function finishReload2(s: GameState, setUiState: SetUiState) {
   const key = s.currentWeaponKey2;
   const w = WEAPONS[key];
   const pw = s.weapons2[key];
@@ -252,16 +286,12 @@ export function finishReload2(
   const take = Math.min(need, pw.reserve);
   pw.mag += take;
   pw.reserve -= take;
-  setUiState((u: any) => ({ ...u, mag2: pw.mag, reserve2: pw.reserve, reloading2: false }));
+  setUiState((u) => ({ ...u, mag2: pw.mag, reserve2: pw.reserve, reloading2: false }));
 }
 
 // ─── Weapon Cycling ───────────────────────────────────────────────────────────
 
-export function cycleWeapon2(
-  s: GameState,
-  dir: number,
-  setUiState: (fn: (u: any) => any) => void,
-) {
+export function cycleWeapon2(s: GameState, dir: number, setUiState: SetUiState) {
   const ownedKeys = Object.keys(s.weapons2).filter((k) => s.weapons2[k].owned);
   if (ownedKeys.length <= 1) return;
   const idx = ownedKeys.indexOf(s.currentWeaponKey2);
@@ -272,11 +302,7 @@ export function cycleWeapon2(
 
 // ─── Camera ───────────────────────────────────────────────────────────────────
 
-export function updateCamera(
-  s: GameState,
-  canvasWidth: number,
-  canvasHeight: number,
-) {
+export function updateCamera(s: GameState, canvasWidth: number, canvasHeight: number) {
   const vpW = s.gameMode === "split" ? canvasWidth / 2 : canvasWidth;
   const targetX = s.player.x - vpW / 2;
   const targetY = s.player.y - canvasHeight / 2;
@@ -310,8 +336,15 @@ export function updateCamera(
 export function updateWalkAnimation(s: GameState, dt: number) {
   if (s.player.hp > 0) {
     s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
-    const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
-      s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
+    const isMoving =
+      s.keys["w"] ||
+      s.keys["a"] ||
+      s.keys["s"] ||
+      s.keys["d"] ||
+      s.keys["arrowup"] ||
+      s.keys["arrowdown"] ||
+      s.keys["arrowleft"] ||
+      s.keys["arrowright"];
     if (isMoving) s.walkPhase += dt * 12;
   }
   if (s.gameMode === "split" && s.player2Alive) {
