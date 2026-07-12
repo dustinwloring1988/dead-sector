@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from "react";
+import { Settings } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useGameSettings } from "@/hooks/use-settings";
+import { SettingsModal } from "@/components/SettingsModal";
 
 // Dead Sector — original round-based top-down zombie shooter.
 // Not affiliated with any existing franchise.
 
 type Vec = { x: number; y: number };
 
-type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number };
-type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" | "toxic" | "fireMiniboss" | "toxicMiniboss" };
+type Bullet = Vec & { vx: number; vy: number; life: number; dmg: number; owner?: 1 | 2 };
+type Zombie = Vec & { hp: number; maxHp: number; speed: number; radius: number; type: "walker" | "runner" | "brute" | "fire" | "toxic" | "fireMiniboss" | "toxicMiniboss" | "ghost" | "underworld" | "redPoolMiniboss" | "bluePoolMiniboss" };
 type ToxicGas = Vec & { radius: number; life: number; maxLife: number };
 type ToxicProjectile = Vec & { vx: number; vy: number; distTraveled: number; maxDist: number };
 type Particle = Vec & { vx: number; vy: number; life: number; maxLife: number; color: string; size: number };
 type Pickup = Vec & { kind: "ammo" | "health" | "maxammo"; life: number };
-type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "caveWall" | "door" | "golfDoor"; hp?: number };
+type Obstacle = Vec & { w: number; h: number; type: "rock" | "crate" | "fence" | "barrel" | "toxicBarrel" | "caveWall" | "door" | "golfDoor"; hp?: number; paid?: number };
 type CaveGenerator = Vec & { active: boolean; progressMs: number };
 
 type Weapon = {
@@ -31,10 +34,10 @@ type Weapon = {
 
 const WEAPONS: Record<string, Weapon> = {
   pistol: { name: "M1911 Sidearm", dmg: 25, fireRate: 220, spread: 0.03, pellets: 1, speed: 900, magSize: 12, reserve: 96, reloadMs: 900, cost: 0, auto: false },
-  smg: { name: "MP-40 SMG", dmg: 22, fireRate: 90, spread: 0.08, pellets: 1, speed: 950, magSize: 32, reserve: 192, reloadMs: 1400, cost: 1000, auto: true },
-  shotgun: { name: "Trench Gun", dmg: 30, fireRate: 550, spread: 0.28, pellets: 7, speed: 850, magSize: 6, reserve: 48, reloadMs: 1700, cost: 1500, auto: false },
-  rifle: { name: "Battle Rifle", dmg: 55, fireRate: 130, spread: 0.04, pellets: 1, speed: 1100, magSize: 24, reserve: 160, reloadMs: 1600, cost: 2500, auto: true },
-  lmg: { name: "Heavy MG", dmg: 40, fireRate: 75, spread: 0.1, pellets: 1, speed: 1000, magSize: 75, reserve: 300, reloadMs: 2400, cost: 4000, auto: true },
+  smg: { name: "SMG", dmg: 22, fireRate: 90, spread: 0.08, pellets: 1, speed: 950, magSize: 32, reserve: 192, reloadMs: 1400, cost: 3000, auto: true },
+  shotgun: { name: "Shotgun", dmg: 30, fireRate: 550, spread: 0.28, pellets: 7, speed: 850, magSize: 6, reserve: 48, reloadMs: 1700, cost: 4000, auto: false },
+  rifle: { name: "Rifle", dmg: 55, fireRate: 130, spread: 0.04, pellets: 1, speed: 1100, magSize: 24, reserve: 160, reloadMs: 1600, cost: 5000, auto: true },
+  lmg: { name: "LMG", dmg: 40, fireRate: 75, spread: 0.1, pellets: 1, speed: 1000, magSize: 75, reserve: 300, reloadMs: 2400, cost: 6000, auto: true },
 };
 
 const MAP_W = 2000;
@@ -47,6 +50,9 @@ const CAVE_DOOR_COST = 1500;
 const GENERATOR_POS = { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 120 };
 const GENERATOR_INTERACT_DISTANCE = 80;
 const GENERATOR_HOLD_MS = 20000;
+const DOOR_HOLD_MS = 1500;
+const REVIVE_HOLD_MS = 3000;
+const REVIVE_HP = 50;
 const CAVE_TOTEM_POS = { x: 1700, y: CAVE_RECT.y + CAVE_RECT.h - 140 };
 const FLASHLIGHT_CONE_ANGLE = Math.PI / 3;
 const FLASHLIGHT_LENGTH = 430;
@@ -71,6 +77,8 @@ const soundEngine = (() => {
   let musicTimers: ReturnType<typeof setTimeout>[] = [];
   let musicOscs: OscillatorNode[] = [];
   let musicNoise: AudioBufferSourceNode | null = null;
+  let _musicEnabled = true;
+  let _sfxEnabled = true;
 
   function ensure() {
     if (!ctx) {
@@ -263,6 +271,28 @@ const soundEngine = (() => {
     toxicDeath() {
       playTone("sawtooth", 200, 0.25, 0.2, undefined, 100);
       playNoise(0.2, 0.15, 1200);
+    },
+    jumpscare() {
+      const { ctx: c, sfx: d } = ensure();
+      const t = c.currentTime;
+      // dissonant screech: two detuned sawtooths sweeping up
+      for (const freq of [220, 233]) {
+        const osc = c.createOscillator();
+        const g = c.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.linearRampToValueAtTime(freq * 3, t + 0.08);
+        osc.frequency.linearRampToValueAtTime(freq * 0.5, t + 0.6);
+        osc.detune.value = 40;
+        g.gain.setValueAtTime(0.4, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.7);
+        osc.connect(g); g.connect(d);
+        osc.start(t); osc.stop(t + 0.7);
+      }
+      // low boom
+      playTone("sine", 60, 0.5, 0.35, undefined, 20);
+      // harsh noise burst
+      playNoise(0.15, 0.3, 3500);
     },
   };
 
@@ -493,6 +523,10 @@ const soundEngine = (() => {
     setMusic(mode: MusicMode) {
       ensure();
       if (mode === currentMusic) return;
+      if (!_musicEnabled && mode !== null) {
+        currentMusic = mode;
+        return;
+      }
       switch (mode) {
         case "menu": playMenuMusic(); break;
         case "main": playMainMusic(); break;
@@ -502,12 +536,38 @@ const soundEngine = (() => {
     },
     getCurrentMusic: () => currentMusic,
     init() { ensure(); },
+    setMusicEnabled(enabled: boolean) {
+      _musicEnabled = enabled;
+      ensure();
+      if (musicGain) musicGain.gain.value = enabled ? 0.25 : 0;
+      if (!enabled) {
+        stopMusic();
+      } else if (currentMusic) {
+        const mode = currentMusic;
+        currentMusic = null;
+        switch (mode) {
+          case "menu": playMenuMusic(); break;
+          case "main": playMainMusic(); break;
+          case "boss": playBossMusic(); break;
+        }
+      }
+    },
+    setSfxEnabled(enabled: boolean) {
+      _sfxEnabled = enabled;
+      ensure();
+      if (sfxGain) sfxGain.gain.value = enabled ? 0.6 : 0;
+    },
+    isMusicEnabled: () => _musicEnabled,
+    isSfxEnabled: () => _sfxEnabled,
   };
 })();
 
 export function ZombieGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const startGameRef = useRef<() => void>(() => {});
+  const [menuMode, setMenuMode] = useState<"main" | "splitLobby">("main");
+  const [gameMode, setGameMode] = useState<"single" | "split">("single");
+  const [controllerConnected, setControllerConnected] = useState(false);
   const [uiState, setUiState] = useState({
     hp: 100,
     points: 500,
@@ -525,6 +585,14 @@ export function ZombieGame() {
     shotsFired: 0,
     shotsHit: 0,
     showingFireworks: false,
+    actualRound: 1,
+    hp2: 100,
+    points2: 500,
+    mag2: WEAPONS.pistol.magSize,
+    reserve2: WEAPONS.pistol.reserve,
+    weaponName2: WEAPONS.pistol.name,
+    reloading2: false,
+    kills2: 0,
   });
   const [showHelp, setShowHelp] = useState(true);
   const isMobileWidth = useIsMobile();
@@ -541,16 +609,32 @@ export function ZombieGame() {
   // OR landscape, incl. wider-than-768 landscape phones) or the viewport is
   // narrow enough to be considered mobile.
   const isMobile = isMobileWidth || isCoarsePointer;
+  const { settings, update: updateSettings } = useGameSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Sync settings to sound engine
+  useEffect(() => {
+    soundEngine.setMusicEnabled(settings.musicEnabled);
+  }, [settings.musicEnabled]);
+  useEffect(() => {
+    soundEngine.setSfxEnabled(settings.sfxEnabled);
+  }, [settings.sfxEnabled]);
+
+  // Ref for game loop access
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const stateRef = useRef({
     player: { x: MAP_W / 2, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
     keys: {} as Record<string, boolean>,
     mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
+    mouse2: { x: 0, y: 0, worldX: 0, worldY: 0, down: false },
     bullets: [] as Bullet[],
     zombies: [] as Zombie[],
     particles: [] as Particle[],
     pickups: [] as Pickup[],
     points: 500,
+    points2: 500,
     round: 1,
     zombiesToSpawn: 0,
     zombiesAlive: 0,
@@ -565,10 +649,10 @@ export function ZombieGame() {
     hitFlash: 0,
     camera: { x: 0, y: 0, shake: 0 },
     buyStations: [
-      { x: MAP_W / 2 - 300, y: SURFACE_CENTER_Y - 300, weapon: "smg" as keyof typeof WEAPONS },
+      { x: CAVE_RECT.x + 200, y: CAVE_RECT.y + CAVE_RECT.h / 2, weapon: "smg" as keyof typeof WEAPONS },
       { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y - 300, weapon: "shotgun" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 - 300, y: SURFACE_CENTER_Y + 300, weapon: "rifle" as keyof typeof WEAPONS },
-      { x: MAP_W / 2 + 300, y: SURFACE_CENTER_Y + 300, weapon: "lmg" as keyof typeof WEAPONS },
+      { x: 250, y: 225, weapon: "rifle" as keyof typeof WEAPONS },
+      { x: MAP_W - 250, y: 225, weapon: "lmg" as keyof typeof WEAPONS },
     ],
     ammoBoxes: [
       { x: MAP_W / 2, y: SURFACE_CENTER_Y + 500 },
@@ -588,13 +672,14 @@ export function ZombieGame() {
     toxicProjectiles: [] as ToxicProjectile[],
     transitionFlash: 0,
     bossMode: false,
-    boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number },
-    bossBullets: [] as { x: number; y: number; vx: number; vy: number; life: number; dmg: number }[],
+    boss: null as null | { x: number; y: number; hp: number; maxHp: number; speed: number; radius: number; lastShot: number; phase: number; lastCharge: number; charging: boolean; chargeDirX: number; chargeDirY: number; chargeTimer: number; lastUnderworldSpawn: number },
+    bossBullets: [] as { x: number; y: number; vx: number; vy: number; life: number; dmg: number; color?: string }[],
     lava: [] as { x: number; y: number; w: number; h: number }[],
     lastLavaDmg: 0,
     won: false,
     messageUntil: 0,
     message: "",
+    messageTarget: 0 as 0 | 1 | 2,
     started: false,
     gameOver: false,
     lastTime: 0,
@@ -610,6 +695,27 @@ export function ZombieGame() {
     kills: 0,
     shotsFired: 0,
     shotsHit: 0,
+    gameMode: "single" as "single" | "split",
+    player2: { x: MAP_W / 2 + 100, y: SURFACE_CENTER_Y, r: 14, hp: 100, maxHp: 100, speed: 260, angle: 0 },
+    camera2: { x: 0, y: 0, shake: 0 },
+    weapons2: {
+      pistol: { mag: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve, owned: true },
+    } as Record<string, { mag: number; reserve: number; owned: boolean }>,
+    currentWeaponKey2: "pistol" as keyof typeof WEAPONS,
+    reloadingUntil2: 0,
+    lastShot2: 0,
+    lastDamageTime2: 0,
+    hitFlash2: 0,
+    muzzleFlash2: 0,
+    walkPhase2: 0,
+    kills2: 0,
+    shotsFired2: 0,
+    shotsHit2: 0,
+    player2Alive: true,
+    controllerIndex: -1,
+    _p2MoveX: 0,
+    _p2MoveY: 0,
+    _vpIsP2: false,
     showingFireworks: false,
     fireworksTimer: 0,
     generator: {
@@ -618,6 +724,7 @@ export function ZombieGame() {
       active: false,
       progressMs: 0,
     } as CaveGenerator,
+    jumpscareUntil: 0,
     generatorHintShown: false,
     golfBalls: [] as { x: number; y: number; vx: number; vy: number; hole: number }[],
     golfHoles: [
@@ -626,9 +733,21 @@ export function ZombieGame() {
     ] as { x: number; y: number }[],
     golfCompleted: false,
     golfDoorOpened: false,
+    golfTargetBalls: [] as { x: number; y: number; color: "red" | "blue"; spawned: boolean }[],
+    lastPoolMinibossShot: 0 as number,
     toxicGas: [] as ToxicGas[],
     toxicZombieSpawned: false,
     lastToxicDmg: 0,
+    ghostSpawnTimer: 0,
+    portalActive: false,
+    portalPos: null as null | { x: number; y: number },
+    glowingCrate: null as null | { x: number; y: number; w: number; h: number; hp: number },
+    portalRoundPending: false,
+    portalSpawnTimer: 0,
+    _doorHoldStartP1: 0,
+    _doorHoldStartP2: 0,
+    _reviveHoldStart: 0,
+    _reviveTarget: 0 as 0 | 1 | 2,
   });
 
   useEffect(() => {
@@ -675,10 +794,12 @@ export function ZombieGame() {
         { x: cx + 470, y: cy + 490, w: 28, h: 28, type: "barrel", hp: 50 },
         { x: cx - 250, y: cy + 370, w: 28, h: 28, type: "barrel", hp: 50 },
         { x: cx + 280, y: cy - 380, w: 28, h: 28, type: "barrel", hp: 50 },
+        // toxic barrels in cave
+        { x: CAVE_RECT.x + 200, y: CAVE_RECT.y + 150, w: 28, h: 28, type: "toxicBarrel", hp: 50 },
+        { x: CAVE_RECT.x + CAVE_RECT.w - 250, y: CAVE_RECT.y + 200, w: 28, h: 28, type: "toxicBarrel", hp: 50 },
+        { x: CAVE_RECT.x + CAVE_RECT.w / 2, y: CAVE_RECT.y + CAVE_RECT.h - 200, w: 28, h: 28, type: "toxicBarrel", hp: 50 },
         // outer wall crates
         { x: cx - 850, y: cy + 750, w: 60, h: 60, type: "crate" },
-        { x: cx + 820, y: cy - 780, w: 60, h: 60, type: "crate" },
-        { x: cx - 780, y: cy - 800, w: 55, h: 55, type: "crate" },
         { x: cx + 770, y: cy + 780, w: 55, h: 55, type: "crate" },
         // cave entrance and chamber at the bottom of the map
         { x: CAVE_RECT.x + 40, y: CAVE_RECT.y, w: CAVE_ENTRY.x - CAVE_RECT.x - 40, h: 32, type: "caveWall" },
@@ -771,6 +892,69 @@ export function ZombieGame() {
 
     const isInCave = (x: number, y: number) =>
       x >= CAVE_RECT.x && x <= CAVE_RECT.x + CAVE_RECT.w && y >= CAVE_RECT.y && y <= CAVE_RECT.y + CAVE_RECT.h;
+    const isInGolfRoom = (x: number, y: number) =>
+      x >= GOLF_ROOM_RECT.x && x <= GOLF_ROOM_RECT.x + GOLF_ROOM_RECT.w && y >= GOLF_ROOM_RECT.y && y <= GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h;
+
+    const caveDark = () => isInCave(s.player.x, s.player.y) && !s.generator?.active;
+    const isInPlayerFlashlight = (wx: number, wy: number, px: number, py: number, pAngle: number) => {
+      const objInCave = isInCave(wx, wy);
+      const playerInCave = isInCave(px, py);
+      if (objInCave && !playerInCave) return false;
+      if (playerInCave && !s.generator?.active) {
+        const dx = wx - px, dy = wy - py;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > FLASHLIGHT_LENGTH) return false;
+        const angle = Math.atan2(dy, dx);
+        let diff = angle - pAngle;
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        return Math.abs(diff) < FLASHLIGHT_CONE_ANGLE / 2;
+      }
+      return !objInCave;
+    };
+    const isInFlashlight = (wx: number, wy: number) => {
+      if (s.generator?.active) return true;
+      if (isInPlayerFlashlight(wx, wy, s.player.x, s.player.y, s.player.angle)) return true;
+      if (s.gameMode === "split" && s.player2Alive) {
+        if (isInPlayerFlashlight(wx, wy, s.player2.x, s.player2.y, s.player2.angle)) return true;
+      }
+      return false;
+    };
+
+    const CAVE_ENTRY_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y + 64 };
+    const CAVE_EXIT_TARGET = { x: CAVE_ENTRY.x + CAVE_ENTRY.w / 2, y: CAVE_RECT.y - 44 };
+    const GOLF_ENTRY_TARGET = { x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - 22 };
+    const GOLF_EXIT_TARGET = { x: GOLF_ENTRY.x + GOLF_ENTRY.w / 2, y: GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h + 44 };
+
+    const getZombiePursuitTarget = (z: Zombie) => {
+      // Find closest alive player
+      let targetPlayer: typeof s.player | null = null;
+      let targetDist = Infinity;
+      if (s.player.hp > 0) {
+        targetPlayer = s.player;
+        targetDist = Math.hypot(s.player.x - z.x, s.player.y - z.y);
+      }
+      if (s.gameMode === "split" && s.player2Alive) {
+        const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
+        if (d2 < targetDist) {
+          targetPlayer = s.player2;
+          targetDist = d2;
+        }
+      }
+      if (!targetPlayer) return { x: z.x, y: z.y };
+
+      const playerInCave = isInCave(targetPlayer.x, targetPlayer.y);
+      const playerInGolf = isInGolfRoom(targetPlayer.x, targetPlayer.y);
+      const zombieInCave = isInCave(z.x, z.y);
+      const zombieInGolf = isInGolfRoom(z.x, z.y);
+
+      if (playerInCave && !zombieInCave) return CAVE_ENTRY_TARGET;
+      if (playerInGolf && !zombieInGolf) return GOLF_ENTRY_TARGET;
+      if (!playerInCave && zombieInCave) return CAVE_EXIT_TARGET;
+      if (!playerInGolf && zombieInGolf) return GOLF_EXIT_TARGET;
+
+      return { x: targetPlayer.x, y: targetPlayer.y };
+    };
 
     const caveLights = [
       { x: CAVE_RECT.x + 120, y: CAVE_RECT.y + 70 },
@@ -785,7 +969,8 @@ export function ZombieGame() {
       const sy = CAVE_RECT.y - s.camera.y;
       if (sx > canvas.width || sy > canvas.height || sx + CAVE_RECT.w < 0 || sy + CAVE_RECT.h < 0) return;
 
-      const playerInCave = isInCave(s.player.x, s.player.y);
+      const cp = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+      const playerInCave = isInCave(cp.x, cp.y);
       const cavePower = !!s.generator?.active;
       const base = ctx.createLinearGradient(sx, sy, sx, sy + CAVE_RECT.h);
       base.addColorStop(0, playerInCave ? (cavePower ? "#1d1814" : "#090705") : "#020202");
@@ -978,6 +1163,55 @@ export function ZombieGame() {
         ctx.fillText(`${bi + 1}`, bx, by + 3);
       }
 
+      // draw target balls (red and blue pool balls)
+      for (const tb of s.golfTargetBalls) {
+        if (tb.spawned) continue;
+        const tx = tb.x - s.camera.x;
+        const ty = tb.y - s.camera.y;
+        const isRed = tb.color === "red";
+        const ballColor = isRed ? "#cc2200" : "#2244cc";
+        const ballHighlight = isRed ? "#ff4422" : "#4488ff";
+        const ballDark = isRed ? "#881100" : "#112288";
+        // shadow
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        ctx.beginPath();
+        ctx.ellipse(tx + 2, ty + 4, 14, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // ball body
+        const bgrd = ctx.createRadialGradient(tx - 3, ty - 3, 1, tx, ty, 14);
+        bgrd.addColorStop(0, ballHighlight);
+        bgrd.addColorStop(0.7, ballColor);
+        bgrd.addColorStop(1, ballDark);
+        ctx.fillStyle = bgrd;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = isRed ? "#661100" : "#112266";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // white circle (pool ball style)
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(tx, ty, 6, 0, Math.PI * 2);
+        ctx.fill();
+        // number
+        ctx.fillStyle = isRed ? "#cc2200" : "#2244cc";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(isRed ? "3" : "10", tx, ty + 3);
+        // pulsing glow
+        const pulse = 0.3 + Math.sin(performance.now() * 0.004) * 0.15;
+        const glowColor = isRed ? `rgba(255,40,20,${pulse})` : `rgba(40,80,255,${pulse})`;
+        const ggrd = ctx.createRadialGradient(tx, ty, 10, tx, ty, 30);
+        ggrd.addColorStop(0, glowColor);
+        ggrd.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = ggrd;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 30, 0, Math.PI * 2);
+        ctx.fill();
+
+      }
+
       // hint text when player is near entry
       if (s.golfDoorOpened && !s.golfCompleted) {
         const pdx = GOLF_ENTRY.x + GOLF_ENTRY.w / 2 - s.player.x;
@@ -999,7 +1233,8 @@ export function ZombieGame() {
       const sy = gen.y - s.camera.y;
       if (sx < -120 || sy < -120 || sx > canvas.width + 120 || sy > canvas.height + 120) return;
 
-      const dist = Math.hypot(s.player.x - gen.x, s.player.y - gen.y);
+      const dg = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+      const dist = Math.hypot(dg.x - gen.x, dg.y - gen.y);
       const progress = gen.active ? 1 : Math.min(1, gen.progressMs / GENERATOR_HOLD_MS);
       const pulse = 0.65 + Math.sin(performance.now() / 180) * 0.35;
 
@@ -1045,7 +1280,6 @@ export function ZombieGame() {
         ctx.fillStyle = "#f5d9a0";
         ctx.font = "bold 10px monospace";
         ctx.textAlign = "center";
-        ctx.fillText("STAY CLOSE", 0, -48);
         ctx.fillText(`${Math.floor(progress * 100)}%`, 0, -36);
       } else {
         ctx.shadowBlur = 20;
@@ -1064,47 +1298,78 @@ export function ZombieGame() {
       ctx.restore();
     }
 
+    let _flashlightOc: HTMLCanvasElement | null = null;
     function drawFlashlightOverlay() {
-      const flashlightStartY = CAVE_RECT.y + s.player.r * 4;
-      const caveDark = isInCave(s.player.x, s.player.y) || s.player.y >= flashlightStartY;
-      if (!caveDark || s.generator?.active) return;
+      const flashlights: { x: number; y: number; angle: number; r: number }[] = [];
+      const localPlayer = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+      flashlights.push(localPlayer);
+      if (s.gameMode === "split" && s.player2Alive) {
+        const otherPlayer = s._vpIsP2 ? s.player : s.player2;
+        flashlights.push(otherPlayer);
+      }
 
-      const screenX = s.player.x - s.camera.x;
-      const screenY = s.player.y - s.camera.y;
-      const leftAngle = s.player.angle - FLASHLIGHT_CONE_ANGLE / 2;
-      const rightAngle = s.player.angle + FLASHLIGHT_CONE_ANGLE / 2;
-      const leftX = screenX + Math.cos(leftAngle) * FLASHLIGHT_LENGTH;
-      const leftY = screenY + Math.sin(leftAngle) * FLASHLIGHT_LENGTH;
-      const rightX = screenX + Math.cos(rightAngle) * FLASHLIGHT_LENGTH;
-      const rightY = screenY + Math.sin(rightAngle) * FLASHLIGHT_LENGTH;
+      const activeFlashlights = flashlights.filter(fp => {
+        const startY = CAVE_RECT.y + fp.r * 4;
+        return (isInCave(fp.x, fp.y) || fp.y >= startY) && !s.generator?.active;
+      });
+      if (activeFlashlights.length === 0) return;
 
-      ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.80)";
-      ctx.beginPath();
-      ctx.rect(0, 0, canvas.width, canvas.height);
-      ctx.moveTo(screenX, screenY);
-      ctx.lineTo(leftX, leftY);
-      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
-      ctx.closePath();
-      ctx.fill("evenodd");
+      const intensity = settingsRef.current.lightIntensity;
+      const overlayAlpha = 0.95 * (1 - intensity * 0.75);
+      const coneAlpha = 0.3 + intensity * 0.4;
 
-      // add a bright cone pass so the lit area reads clearly
-      ctx.beginPath();
-      ctx.moveTo(screenX, screenY);
-      ctx.lineTo(leftX, leftY);
-      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
-      ctx.closePath();
-      ctx.clip();
-      const coneGlow = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, FLASHLIGHT_LENGTH);
-      coneGlow.addColorStop(0, "rgba(255,250,220,0.45)");
-      coneGlow.addColorStop(0.55, "rgba(255,245,205,0.18)");
-      coneGlow.addColorStop(1, "rgba(255,245,205,0)");
-      ctx.fillStyle = coneGlow;
-      ctx.beginPath();
-      ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, 0, Math.PI * 2);
-      ctx.fill();
+      if (!_flashlightOc || _flashlightOc.width !== canvas.width || _flashlightOc.height !== canvas.height) {
+        _flashlightOc = document.createElement("canvas");
+        _flashlightOc.width = canvas.width;
+        _flashlightOc.height = canvas.height;
+      }
+      const oc = _flashlightOc;
+      const ocCtx = oc.getContext("2d")!;
+      ocCtx.clearRect(0, 0, oc.width, oc.height);
+      ocCtx.fillStyle = `rgba(0,0,0,${overlayAlpha})`;
+      ocCtx.fillRect(0, 0, oc.width, oc.height);
 
-      ctx.restore();
+      ocCtx.globalCompositeOperation = "destination-out";
+      for (const fp of activeFlashlights) {
+        const screenX = fp.x - s.camera.x;
+        const screenY = fp.y - s.camera.y;
+        const leftAngle = fp.angle - FLASHLIGHT_CONE_ANGLE / 2;
+        const rightAngle = fp.angle + FLASHLIGHT_CONE_ANGLE / 2;
+        ocCtx.fillStyle = "rgba(0,0,0,1)";
+        ocCtx.beginPath();
+        ocCtx.moveTo(screenX, screenY);
+        ocCtx.lineTo(screenX + Math.cos(leftAngle) * FLASHLIGHT_LENGTH, screenY + Math.sin(leftAngle) * FLASHLIGHT_LENGTH);
+        ocCtx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
+        ocCtx.closePath();
+        ocCtx.fill();
+      }
+      ocCtx.globalCompositeOperation = "source-over";
+
+      ctx.drawImage(oc, 0, 0);
+
+      for (const fp of activeFlashlights) {
+        const screenX = fp.x - s.camera.x;
+        const screenY = fp.y - s.camera.y;
+        const leftAngle = fp.angle - FLASHLIGHT_CONE_ANGLE / 2;
+        const rightAngle = fp.angle + FLASHLIGHT_CONE_ANGLE / 2;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(screenX + Math.cos(leftAngle) * FLASHLIGHT_LENGTH, screenY + Math.sin(leftAngle) * FLASHLIGHT_LENGTH);
+        ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, leftAngle, rightAngle);
+        ctx.closePath();
+        ctx.clip();
+        const coneGlow = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, FLASHLIGHT_LENGTH);
+        coneGlow.addColorStop(0, `rgba(255,250,220,${coneAlpha})`);
+        coneGlow.addColorStop(0.55, "rgba(255,245,205,0.18)");
+        coneGlow.addColorStop(1, "rgba(255,245,205,0)");
+        ctx.fillStyle = coneGlow;
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, FLASHLIGHT_LENGTH, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
 
     const resize = () => {
@@ -1117,10 +1382,38 @@ export function ZombieGame() {
     const kd = (e: KeyboardEvent) => {
       s.keys[e.key.toLowerCase()] = true;
       if (e.key.toLowerCase() === "r") tryReload();
-      if (e.key.toLowerCase() === "e") tryInteract();
+      if (e.key.toLowerCase() === "e") {
+        // Check for revive proximity first (split-screen)
+        let reviveStarted = false;
+        if (s.gameMode === "split" && s.player.hp > 0 && !s.player2Alive) {
+          // Only start if not already reviving (prevents OS key-repeat from resetting timer)
+          if (s._reviveHoldStart === 0) {
+            const dx = s.player2.x - s.player.x, dy = s.player2.y - s.player.y;
+            if (dx * dx + dy * dy < 90 * 90) {
+              s._reviveHoldStart = performance.now();
+              s._reviveTarget = 2;
+              reviveStarted = true;
+            }
+          } else {
+            reviveStarted = true; // already reviving, don't fall through to door hold
+          }
+        }
+        if (!reviveStarted && s._doorHoldStartP1 === 0) {
+          s._doorHoldStartP1 = performance.now();
+        }
+      }
     };
     const ku = (e: KeyboardEvent) => {
       s.keys[e.key.toLowerCase()] = false;
+      if (e.key.toLowerCase() === "e") {
+        if (s._reviveHoldStart > 0) {
+          s._reviveHoldStart = 0;
+          s._reviveTarget = 0;
+        } else if (s._doorHoldStartP1 > 0 && performance.now() - s._doorHoldStartP1 < DOOR_HOLD_MS) {
+          tryInteract();
+        }
+        s._doorHoldStartP1 = 0;
+      }
     };
     const mm = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -1145,9 +1438,29 @@ export function ZombieGame() {
     window.addEventListener("blur", mu);
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    function setMessage(m: string, ms = 1800) {
+    // Controller detection for split-screen lobby
+    const onGamepadConnected = (e: GamepadEvent) => {
+      s.controllerIndex = e.gamepad.index;
+      setControllerConnected(true);
+    };
+    const onGamepadDisconnected = (e: GamepadEvent) => {
+      if (e.gamepad.index === s.controllerIndex) {
+        s.controllerIndex = -1;
+        setControllerConnected(false);
+      }
+    };
+    window.addEventListener("gamepadconnected", onGamepadConnected);
+    window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
+    // Check for already-connected controllers
+    const existingGamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (let i = 0; i < existingGamepads.length; i++) {
+      if (existingGamepads[i]) { s.controllerIndex = i; setControllerConnected(true); break; }
+    }
+
+    function setMessage(m: string, ms = 1800, target: 0 | 1 | 2 = 0) {
       s.message = m;
       s.messageUntil = performance.now() + ms;
+      s.messageTarget = target;
     }
 
     function startRound(r: number) {
@@ -1158,7 +1471,7 @@ export function ZombieGame() {
       s.spawnCooldown = 500;
       setMessage(`ROUND ${r}`, 2200);
       soundEngine.roundStart();
-      setUiState((u) => ({ ...u, round: r, zombiesLeft: count }));
+      setUiState((u) => ({ ...u, round: r, actualRound: r, zombiesLeft: count }));
       if (!s.torches.every((t) => t.lit)) {
         s.fireZombieToSpawn = true;
       }
@@ -1169,11 +1482,22 @@ export function ZombieGame() {
       s.started = true;
       s.mouse.down = false;
       s.lastShot = performance.now();
+      s.lastShot2 = performance.now();
       s.startTime = performance.now();
       s.endTime = 0;
       if (s.generator) {
         s.generator.active = false;
         s.generator.progressMs = 0;
+      }
+      // Initialize player 2 for split-screen
+      if (s.gameMode === "split") {
+        s.player2.x = MAP_W / 2 + 100;
+        s.player2.y = SURFACE_CENTER_Y;
+        s.player2.hp = 100;
+        s.player2.maxHp = 100;
+        s.player2Alive = true;
+        s.camera2.x = s.player2.x - canvas.width / 4;
+        s.camera2.y = s.player2.y - canvas.height / 2;
       }
       setUiState((u) => ({ ...u, started: true, elapsedMs: 0 }));
       setShowHelp(false);
@@ -1185,11 +1509,296 @@ export function ZombieGame() {
     startGameRef.current = beginGame;
 
     function haptic(pattern: number | number[]) {
+      if (!settingsRef.current.hapticEnabled) return;
       try {
         if (typeof navigator !== "undefined" && "vibrate" in navigator) {
           navigator.vibrate(pattern);
         }
       } catch { /* ignore */ }
+    }
+
+    // ─── Gamepad polling for Player 2 ──────────────────────────────────────────
+    const GAMEPAD_DEADZONE = 0.18;
+    const GAMEPAD_TRIGGER_THRESHOLD = 0.5;
+    let p2PrevRT = false;
+    let p2PrevLB = false;
+    let p2PrevY = false;
+
+    // Continuous controller detection (runs even on menu for lobby detection)
+    function detectGamepad() {
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      // Try to find a connected gamepad
+      if (s.controllerIndex < 0 || !gamepads[s.controllerIndex]) {
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) {
+            s.controllerIndex = i;
+            setControllerConnected(true);
+            break;
+          }
+        }
+      } else {
+        // Verify still connected
+        if (!gamepads[s.controllerIndex]) {
+          s.controllerIndex = -1;
+          setControllerConnected(false);
+        }
+      }
+    }
+
+    function pollGamepad() {
+      if (s.gameMode !== "split" || !s.started || s.gameOver) return;
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const gp = gamepads[s.controllerIndex];
+      if (!gp) {
+        // Controller disconnected — try to find one
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) { s.controllerIndex = i; return pollGamepad(); }
+        }
+        return;
+      }
+
+      // Left stick → movement
+      let lx = gp.axes[0] || 0;
+      let ly = gp.axes[1] || 0;
+      if (Math.abs(lx) < GAMEPAD_DEADZONE) lx = 0;
+      if (Math.abs(ly) < GAMEPAD_DEADZONE) ly = 0;
+      s._p2MoveX = lx;
+      s._p2MoveY = ly;
+
+      // Right stick → aim direction (if magnitude > deadzone)
+      let rx = gp.axes[2] || 0;
+      let ry = gp.axes[3] || 0;
+      if (Math.abs(rx) < GAMEPAD_DEADZONE) rx = 0;
+      if (Math.abs(ry) < GAMEPAD_DEADZONE) ry = 0;
+      if (rx !== 0 || ry !== 0) {
+        s.player2.angle = Math.atan2(ry, rx);
+        // Set world aim point for shooting direction
+        s.mouse2.worldX = s.player2.x + Math.cos(s.player2.angle) * 200;
+        s.mouse2.worldY = s.player2.y + Math.sin(s.player2.angle) * 200;
+      }
+
+      // Right trigger → shoot
+      const rtVal = gp.buttons[7]?.value ?? 0;
+      const rtDown = rtVal > GAMEPAD_TRIGGER_THRESHOLD;
+      s.mouse2.down = rtDown;
+
+      // Left bumper → reload (edge-triggered)
+      const lbDown = !!(gp.buttons[4]?.pressed);
+      if (lbDown && !p2PrevLB) {
+        tryReload2();
+      }
+      p2PrevLB = lbDown;
+
+      // Y button → interact (hold to pay half or revive, tap to buy full)
+      const yDown = !!(gp.buttons[3]?.pressed);
+      if (yDown && !p2PrevY) {
+        // Check for revive proximity first
+        let reviveStarted = false;
+        if (s.player2Alive && s.player.hp <= 0) {
+          const dx = s.player.x - s.player2.x, dy = s.player.y - s.player2.y;
+          if (dx * dx + dy * dy < 90 * 90) {
+            s._reviveHoldStart = performance.now();
+            s._reviveTarget = 1;
+            reviveStarted = true;
+          }
+        }
+        if (!reviveStarted) {
+          s._doorHoldStartP2 = performance.now();
+        }
+      }
+      if (!yDown && p2PrevY) {
+        if (s._reviveHoldStart > 0) {
+          s._reviveHoldStart = 0;
+          s._reviveTarget = 0;
+        } else if (s._doorHoldStartP2 > 0 && performance.now() - s._doorHoldStartP2 < DOOR_HOLD_MS) {
+          tryInteract2();
+        }
+        s._doorHoldStartP2 = 0;
+      }
+      p2PrevY = yDown;
+
+      // D-pad → weapon switching
+      if (gp.buttons[12]?.pressed) cycleWeapon2(-1); // up
+      if (gp.buttons[13]?.pressed) cycleWeapon2(1);  // down
+    }
+
+    function tryReload2() {
+      const key = s.currentWeaponKey2;
+      const w = WEAPONS[key];
+      const pw = s.weapons2[key];
+      if (!pw || pw.mag >= w.magSize || pw.reserve <= 0) return;
+      if (performance.now() < s.reloadingUntil2) return;
+      s.reloadingUntil2 = performance.now() + w.reloadMs;
+      soundEngine.reload();
+      haptic([15, 40, 25]);
+      setUiState((u) => ({ ...u, reloading2: true }));
+    }
+
+    function finishReload2() {
+      const key = s.currentWeaponKey2;
+      const w = WEAPONS[key];
+      const pw = s.weapons2[key];
+      const need = w.magSize - pw.mag;
+      const take = Math.min(need, pw.reserve);
+      pw.mag += take;
+      pw.reserve -= take;
+      setUiState((u) => ({ ...u, mag2: pw.mag, reserve2: pw.reserve, reloading2: false }));
+    }
+
+    function syncWeaponUi2() {
+      const w = WEAPONS[s.currentWeaponKey2];
+      const pw = s.weapons2[s.currentWeaponKey2];
+      setUiState((u) => ({ ...u, weaponName2: w.name, mag2: pw.mag, reserve2: pw.reserve, points2: s.points2 }));
+    }
+
+    function cycleWeapon2(dir: number) {
+      const ownedKeys = Object.keys(s.weapons2).filter((k) => s.weapons2[k].owned);
+      if (ownedKeys.length <= 1) return;
+      const idx = ownedKeys.indexOf(s.currentWeaponKey2);
+      const next = (idx + dir + ownedKeys.length) % ownedKeys.length;
+      s.currentWeaponKey2 = ownedKeys[next] as keyof typeof WEAPONS;
+      syncWeaponUi2();
+    }
+
+    function shoot2() {
+      const key = s.currentWeaponKey2;
+      const w = WEAPONS[key];
+      const pw = s.weapons2[key];
+      const now = performance.now();
+      if (now < s.reloadingUntil2) return;
+      if (now - s.lastShot2 < w.fireRate) return;
+      if (pw.mag <= 0) { soundEngine.empty(); tryReload2(); return; }
+      s.lastShot2 = now;
+      pw.mag--;
+      const baseAngle = s.player2.angle;
+      for (let i = 0; i < w.pellets; i++) {
+        const a = baseAngle + (Math.random() - 0.5) * w.spread * 2;
+        s.bullets.push({
+          x: s.player2.x + Math.cos(a) * 20,
+          y: s.player2.y + Math.sin(a) * 20,
+          vx: Math.cos(a) * w.speed,
+          vy: Math.sin(a) * w.speed,
+          life: 0.8,
+          dmg: w.dmg,
+          owner: 2,
+        });
+      }
+      s.shotsFired2 += w.pellets;
+      soundEngine.shoot(key);
+      s.camera2.shake = Math.min(s.camera2.shake + 3, 12);
+      s.muzzleFlash2 = 1;
+      syncWeaponUi2();
+    }
+
+    function tryInteract2() {
+      // cave door
+      for (let i = 0; i < s.obstacles.length; i++) {
+        const o = s.obstacles[i];
+        if (o.type !== "door") continue;
+        const dx = o.x + o.w / 2 - s.player2.x;
+        const dy = o.y + o.h / 2 - s.player2.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          const remaining = CAVE_DOOR_COST - (o.paid || 0);
+          if (s.points2 < remaining) { setMessage(`Need ${remaining} points`, 1800, 2); return; }
+          s.points2 -= remaining;
+          openDoor(o, 2);
+          return;
+        }
+      }
+      // golf door
+      for (let i = 0; i < s.obstacles.length; i++) {
+        const o = s.obstacles[i];
+        if (o.type !== "golfDoor") continue;
+        const dx = o.x + o.w / 2 - s.player2.x;
+        const dy = o.y + o.h / 2 - s.player2.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          const remaining = GOLF_DOOR_COST - (o.paid || 0);
+          if (s.points2 < remaining) { setMessage(`Need ${remaining} points`, 1800, 2); return; }
+          s.points2 -= remaining;
+          openDoor(o, 2);
+          return;
+        }
+      }
+      // buy station
+      for (const b of s.buyStations) {
+        const dx = b.x - s.player2.x, dy = b.y - s.player2.y;
+        if (dx * dx + dy * dy < 70 * 70) {
+          if (!s.generator?.active) { setMessage("POWER NEEDED", 1800, 2); return; }
+          const w = WEAPONS[b.weapon];
+          const owned = s.weapons2[b.weapon]?.owned;
+          const cost = owned ? Math.floor(w.cost * 0.5) : w.cost;
+          if (s.points2 < cost) { setMessage(`Need ${cost} points`, 1800, 2); return; }
+          s.points2 -= cost;
+          soundEngine.buyWeapon();
+          if (!owned) {
+            s.weapons2[b.weapon] = { mag: w.magSize, reserve: w.reserve, owned: true };
+            s.currentWeaponKey2 = b.weapon;
+            setMessage(`Purchased ${w.name}`, 1800, 2);
+          } else {
+            const pw = s.weapons2[b.weapon];
+            pw.mag = w.magSize;
+            pw.reserve = w.reserve;
+            setMessage(`Refilled ${w.name}`, 1800, 2);
+          }
+          syncWeaponUi2();
+          return;
+        }
+      }
+      // ammo box
+      for (const a of s.ammoBoxes) {
+        const dx = a.x - s.player2.x, dy = a.y - s.player2.y;
+        if (dx * dx + dy * dy < 60 * 60) {
+          const cost = 500;
+          if (s.points2 < cost) { setMessage(`Ammo: ${cost} pts`, 1800, 2); return; }
+          s.points2 -= cost;
+          soundEngine.buyWeapon();
+          const w = WEAPONS[s.currentWeaponKey2];
+          const pw = s.weapons2[s.currentWeaponKey2];
+          pw.reserve = w.reserve;
+          setMessage("Max ammo!", 1800, 2);
+          syncWeaponUi2();
+          return;
+        }
+      }
+      // dark ether portal
+      if (s.portalActive && s.portalPos) {
+        const dx = s.portalPos.x - s.player2.x, dy = s.portalPos.y - s.player2.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          s.portalActive = false;
+          s.portalPos = null;
+          s.glowingCrate = null;
+          enterBossMap();
+          return;
+        }
+      }
+    }
+
+    function damagePlayer2(amt: number) {
+      const now = performance.now();
+      if (now - s.lastDamageTime2 < 400) return;
+      s.lastDamageTime2 = now;
+      s.player2.hp -= amt;
+      s.hitFlash2 = 1;
+      s.camera2.shake = Math.min(s.camera2.shake + 8, 16);
+      soundEngine.playerDamage();
+      if (s.player2.hp <= 0) {
+        s.player2.hp = 0;
+        s.player2Alive = false;
+        const inCave = isInCave(s.player2.x, s.player2.y) && !s.generator.active;
+        if (inCave) {
+          s.camera2.shake = 20;
+        }
+        haptic([80, 60, 120, 60, 200]);
+        // Check if both players are dead
+        if (!s.player2Alive && s.player.hp <= 0) {
+          s.gameOver = true;
+          soundEngine.setMusic("menu");
+          setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+        }
+      } else {
+        haptic([30, 20, 40]);
+      }
+      setUiState((u) => ({ ...u, hp2: Math.max(0, s.player2.hp) }));
     }
 
     function tryReload() {
@@ -1215,6 +1824,41 @@ export function ZombieGame() {
       setUiState((u) => ({ ...u, mag: pw.mag, reserve: pw.reserve, reloading: false }));
     }
 
+    function openDoor(o: Obstacle, playerNum: 1 | 2) {
+      const idx = s.obstacles.indexOf(o);
+      if (idx === -1) return;
+      s.obstacles.splice(idx, 1);
+      soundEngine.buyWeapon();
+      if (o.type === "door") {
+        setMessage("CAVE DOOR OPENED", 2200, playerNum);
+        if (playerNum === 1) syncWeaponUi(); else syncWeaponUi2();
+        if (!s.toxicZombieSpawned) {
+          const hp = 30 + s.round * 15;
+          s.zombies.push({ x: GENERATOR_POS.x - 60, y: GENERATOR_POS.y, hp, maxHp: hp, speed: 45 + s.round * 3, radius: 18, type: "toxic" });
+          s.zombies.push({ x: GENERATOR_POS.x + 60, y: GENERATOR_POS.y, hp, maxHp: hp, speed: 45 + s.round * 3, radius: 18, type: "toxic" });
+          s.zombiesAlive += 2;
+          s.toxicZombieSpawned = true;
+        }
+        for (let i = 0; i < 3; i++) spawnGhostZombie();
+      } else if (o.type === "golfDoor") {
+        s.golfDoorOpened = true;
+        setMessage("GOLF ROOM OPENED", 2200, playerNum);
+        if (playerNum === 1) syncWeaponUi(); else syncWeaponUi2();
+        if (s.golfBalls.length === 0) {
+          s.golfBalls = [
+            { x: GOLF_ROOM_RECT.w / 2 - 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+            { x: GOLF_ROOM_RECT.w / 2 + 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
+          ];
+        }
+        if (s.golfTargetBalls.length === 0) {
+          s.golfTargetBalls = [
+            { x: GOLF_ROOM_RECT.w / 2 - 350, y: 180, color: "red", spawned: false },
+            { x: GOLF_ROOM_RECT.w / 2 + 350, y: 180, color: "blue", spawned: false },
+          ];
+        }
+      }
+    }
+
     function tryInteract() {
       // cave door
       for (let i = 0; i < s.obstacles.length; i++) {
@@ -1223,19 +1867,10 @@ export function ZombieGame() {
         const dx = o.x + o.w / 2 - s.player.x;
         const dy = o.y + o.h / 2 - s.player.y;
         if (dx * dx + dy * dy < 90 * 90) {
-          if (s.points < CAVE_DOOR_COST) { setMessage(`Need ${CAVE_DOOR_COST} points`); return; }
-          s.points -= CAVE_DOOR_COST;
-          s.obstacles.splice(i, 1);
-          soundEngine.buyWeapon();
-          setMessage("CAVE DOOR OPENED", 2200);
-          syncWeaponUi();
-          // spawn toxic zombie by the generator
-          if (!s.toxicZombieSpawned) {
-            const hp = 30 + s.round * 15;
-            s.zombies.push({ x: GENERATOR_POS.x - 60, y: GENERATOR_POS.y, hp, maxHp: hp, speed: 45 + s.round * 3, radius: 18, type: "toxic" });
-            s.zombiesAlive++;
-            s.toxicZombieSpawned = true;
-          }
+          const remaining = CAVE_DOOR_COST - (o.paid || 0);
+          if (s.points < remaining) { setMessage(`Need ${remaining} points`, 1800, 1); return; }
+          s.points -= remaining;
+          openDoor(o, 1);
           return;
         }
       }
@@ -1247,43 +1882,34 @@ export function ZombieGame() {
         const dx = o.x + o.w / 2 - s.player.x;
         const dy = o.y + o.h / 2 - s.player.y;
         if (dx * dx + dy * dy < 90 * 90) {
-          if (s.points < GOLF_DOOR_COST) { setMessage(`Need ${GOLF_DOOR_COST} points`); return; }
-          s.points -= GOLF_DOOR_COST;
-          s.obstacles.splice(i, 1);
-          s.golfDoorOpened = true;
-          soundEngine.buyWeapon();
-          setMessage("GOLF ROOM OPENED", 2200);
-          // init golf balls
-          if (s.golfBalls.length === 0) {
-            s.golfBalls = [
-              { x: GOLF_ROOM_RECT.w / 2 - 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
-              { x: GOLF_ROOM_RECT.w / 2 + 80, y: GOLF_ROOM_RECT.h - 80, vx: 0, vy: 0, hole: -1 },
-            ];
-          }
-          syncWeaponUi();
+          const remaining = GOLF_DOOR_COST - (o.paid || 0);
+          if (s.points < remaining) { setMessage(`Need ${remaining} points`, 1800, 1); return; }
+          s.points -= remaining;
+          openDoor(o, 1);
           return;
         }
       }
 
-      // buy station
+      // buy station (requires power)
       for (const b of s.buyStations) {
         const dx = b.x - s.player.x, dy = b.y - s.player.y;
         if (dx * dx + dy * dy < 70 * 70) {
+          if (!s.generator?.active) { setMessage("POWER NEEDED", 1800, 1); return; }
           const w = WEAPONS[b.weapon];
           const owned = s.weapons[b.weapon]?.owned;
           const cost = owned ? Math.floor(w.cost * 0.5) : w.cost; // refill cost
-          if (s.points < cost) { setMessage(`Need ${cost} points`); return; }
+          if (s.points < cost) { setMessage(`Need ${cost} points`, 1800, 1); return; }
           s.points -= cost;
           soundEngine.buyWeapon();
           if (!owned) {
             s.weapons[b.weapon] = { mag: w.magSize, reserve: w.reserve, owned: true };
             s.currentWeaponKey = b.weapon;
-            setMessage(`Purchased ${w.name}`);
+            setMessage(`Purchased ${w.name}`, 1800, 1);
           } else {
             const pw = s.weapons[b.weapon];
             pw.mag = w.magSize;
             pw.reserve = w.reserve;
-            setMessage(`Refilled ${w.name}`);
+            setMessage(`Refilled ${w.name}`, 1800, 1);
           }
           syncWeaponUi();
           return;
@@ -1294,14 +1920,25 @@ export function ZombieGame() {
         const dx = a.x - s.player.x, dy = a.y - s.player.y;
         if (dx * dx + dy * dy < 60 * 60) {
           const cost = 500;
-          if (s.points < cost) { setMessage(`Ammo: ${cost} pts`); return; }
+          if (s.points < cost) { setMessage(`Ammo: ${cost} pts`, 1800, 1); return; }
           s.points -= cost;
           soundEngine.buyWeapon();
           const w = WEAPONS[s.currentWeaponKey];
           const pw = s.weapons[s.currentWeaponKey];
           pw.reserve = w.reserve;
-          setMessage("Max ammo!");
+          setMessage("Max ammo!", 1800, 1);
           syncWeaponUi();
+          return;
+        }
+      }
+      // dark ether portal
+      if (s.portalActive && s.portalPos) {
+        const dx = s.portalPos.x - s.player.x, dy = s.portalPos.y - s.player.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          s.portalActive = false;
+          s.portalPos = null;
+          s.glowingCrate = null;
+          enterBossMap();
           return;
         }
       }
@@ -1314,14 +1951,15 @@ export function ZombieGame() {
     }
 
     function spawnZombie() {
-      // spawn just outside camera view
-      let cx = s.player.x;
-      let cy = s.player.y;
+      // spawn just outside camera view — use random alive player
+      const spawnPlayer = (s.gameMode === "split" && s.player2Alive && Math.random() > 0.5) ? s.player2 : s.player;
+      let cx = spawnPlayer.x;
+      let cy = spawnPlayer.y;
       for (let attempt = 0; attempt < 12; attempt++) {
         const angle = Math.random() * Math.PI * 2;
         const dist = 700;
-        const x = s.player.x + Math.cos(angle) * dist;
-        const y = s.player.y + Math.sin(angle) * dist;
+        const x = spawnPlayer.x + Math.cos(angle) * dist;
+        const y = spawnPlayer.y + Math.sin(angle) * dist;
         cx = Math.max(50, Math.min(MAP_W - 50, x));
         cy = Math.max(50, Math.min(MAP_H - 50, y));
         if (!isInCave(cx, cy)) break;
@@ -1419,6 +2057,29 @@ export function ZombieGame() {
       soundEngine.bossEnrage();
     }
 
+    function spawnGhostZombie() {
+      const cx = CAVE_RECT.x + 80 + Math.random() * (CAVE_RECT.w - 160);
+      const cy = CAVE_RECT.y + 80 + Math.random() * (CAVE_RECT.h - 160);
+      const hp = 15;
+      const speed = 35 + Math.random() * 20;
+      const radius = 14;
+      s.zombies.push({ x: cx, y: cy, hp, maxHp: hp, speed, radius, type: "ghost" });
+      s.zombiesAlive++;
+    }
+
+    function spawnUnderworldZombie() {
+      if (!s.boss) return;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 20;
+      const x = s.boss.x + Math.cos(angle) * dist;
+      const y = s.boss.y + Math.sin(angle) * dist;
+      const hp = 20;
+      const speed = 40 + Math.random() * 20;
+      const radius = 14;
+      s.zombies.push({ x, y, hp, maxHp: hp, speed, radius, type: "underworld" });
+      s.zombiesAlive++;
+    }
+
     function shoot() {
       const key = s.currentWeaponKey;
       const w = WEAPONS[key];
@@ -1439,6 +2100,7 @@ export function ZombieGame() {
           vy: Math.sin(a) * w.speed,
           life: 0.8,
           dmg: w.dmg,
+          owner: 1,
         });
       }
       s.shotsFired += w.pellets;
@@ -1478,24 +2140,37 @@ export function ZombieGame() {
       soundEngine.playerDamage();
       if (s.player.hp <= 0) {
         s.player.hp = 0;
-        s.gameOver = true;
-        soundEngine.setMusic("menu");
+        const inCave = isInCave(s.player.x, s.player.y) && !s.generator.active;
+        if (inCave) {
+          s.jumpscareUntil = performance.now() + 1500;
+          soundEngine.jumpscare();
+          s.camera.shake = 20;
+        }
         haptic([80, 60, 120, 60, 200]);
-        setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+        // In split-screen, only game over if both players are dead
+        if (s.gameMode === "split" && s.player2Alive) {
+          // P2 still alive, game continues
+        } else {
+          s.gameOver = true;
+          soundEngine.setMusic("menu");
+          if (!inCave) {
+            setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+          }
+        }
       } else {
         haptic([30, 20, 40]);
       }
       setUiState((u) => ({ ...u, hp: Math.max(0, s.player.hp) }));
     }
 
-    function explodeBarrel(bx: number, by: number) {
+    function explodeBarrel(bx: number, by: number, isToxic = false) {
       const EXPLOSION_RADIUS = 100;
       const EXPLOSION_DAMAGE = 80;
       soundEngine.barrelExplode();
       // remove barrel from obstacles
       for (let i = s.obstacles.length - 1; i >= 0; i--) {
         const o = s.obstacles[i];
-        if (o.type === "barrel" && bx >= o.x && bx <= o.x + o.w && by >= o.y && by <= o.y + o.h) {
+        if ((o.type === "barrel" || o.type === "toxicBarrel") && bx >= o.x && bx <= o.x + o.w && by >= o.y && by <= o.y + o.h) {
           s.obstacles.splice(i, 1);
           break;
         }
@@ -1547,22 +2222,52 @@ export function ZombieGame() {
         }
       }
       // damage player
-      const pdx = s.player.x - bx, pdy = s.player.y - by;
-      const playerDist = Math.hypot(pdx, pdy);
-      if (playerDist < EXPLOSION_RADIUS) {
-        const falloff = 1 - playerDist / EXPLOSION_RADIUS;
-        damagePlayer(Math.round(EXPLOSION_DAMAGE * falloff * 0.5));
+      if (s.player.hp > 0) {
+        const pdx = s.player.x - bx, pdy = s.player.y - by;
+        const playerDist = Math.hypot(pdx, pdy);
+        if (playerDist < EXPLOSION_RADIUS) {
+          const falloff = 1 - playerDist / EXPLOSION_RADIUS;
+          damagePlayer(Math.round(EXPLOSION_DAMAGE * falloff * 0.5));
+        }
+      }
+      // damage player 2
+      if (s.gameMode === "split" && s.player2Alive) {
+        const p2dx = s.player2.x - bx, p2dy = s.player2.y - by;
+        const p2dist = Math.hypot(p2dx, p2dy);
+        if (p2dist < EXPLOSION_RADIUS) {
+          const falloff = 1 - p2dist / EXPLOSION_RADIUS;
+          damagePlayer2(Math.round(EXPLOSION_DAMAGE * falloff * 0.5));
+        }
+      }
+      // toxic barrel: spawn toxic gas clouds
+      if (isToxic) {
+        s.toxicGas.push({ x: bx, y: by, radius: 70, life: 5, maxLife: 5 });
+        s.toxicGas.push({ x: bx + 50, y: by - 30, radius: 55, life: 4, maxLife: 4 });
+        s.toxicGas.push({ x: bx - 40, y: by + 40, radius: 60, life: 4.5, maxLife: 4.5 });
+        // green gas particles
+        for (let i = 0; i < 20; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 30 + Math.random() * 80;
+          s.particles.push({
+            x: bx, y: by, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.6 + Math.random() * 0.6, maxLife: 1.2,
+            color: Math.random() < 0.5 ? "#33cc33" : "#22aa22",
+            size: 4 + Math.random() * 5,
+          });
+        }
+        setMessage("TOXIC BARREL!", 1500);
       }
     }
 
-    function killZombie(z: Zombie, headshot = false) {
+    function killZombie(z: Zombie, headshot = false, owner: 1 | 2 = 1) {
       s.kills++;
+      if (owner === 2) s.kills2++;
       s.zombiesAlive--;
       if (z.type === "fire") s.fireZombieAlive = false;
       if (z.type === "fireMiniboss") s.minibossAlive = false;
       if (z.type === "toxicMiniboss") s.toxicMinibossAlive = false;
-      const pts = (z.type === "brute" ? 200 : z.type === "fireMiniboss" ? 300 : z.type === "toxicMiniboss" ? 300 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : 60) + (headshot ? 30 : 0);
-      s.points += pts;
+      const pts = (z.type === "brute" ? 200 : z.type === "fireMiniboss" ? 300 : z.type === "toxicMiniboss" ? 300 : z.type === "redPoolMiniboss" ? 350 : z.type === "bluePoolMiniboss" ? 350 : z.type === "runner" ? 80 : z.type === "fire" ? 100 : z.type === "toxic" ? 120 : z.type === "ghost" ? 5 : z.type === "underworld" ? 10 : 60) + (headshot ? 30 : 0);
+      if (owner === 2) { s.points2 += pts; } else { s.points += pts; }
       soundEngine.zombieDeath();
       // fireMiniboss: big explosion, drops, advance totem phase
       if (z.type === "fireMiniboss") {
@@ -1628,9 +2333,32 @@ export function ZombieGame() {
             setMessage("THE CORE CALLS...", 2600);
           }, 2000);
         }
+      } else if (z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss") {
+        const isRed = z.type === "redPoolMiniboss";
+        // colored explosion particles
+        for (let i = 0; i < 35; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 220;
+          s.particles.push({
+            x: z.x, y: z.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.6 + Math.random() * 0.5, maxLife: 1.1,
+            color: isRed
+              ? (Math.random() < 0.3 ? "#ff2200" : Math.random() < 0.6 ? "#ff4422" : "#cc2200")
+              : (Math.random() < 0.3 ? "#2244cc" : Math.random() < 0.6 ? "#4488ff" : "#2266ff"),
+            size: 3 + Math.random() * 5,
+          });
+        }
+        // scorch decal
+        s.decals.push({ x: z.x, y: z.y, r: z.radius * 2.0, color: isRed ? "#3a0a0a" : "#0a0a3a", alpha: 0.6, kind: "scorch" });
+        if (s.decals.length > 120) s.decals.shift();
+        s.camera.shake = Math.min(s.camera.shake + 12, 20);
+        // guaranteed health and ammo drops
+        s.pickups.push({ x: z.x - 15, y: z.y, kind: "health", life: 20 });
+        s.pickups.push({ x: z.x + 15, y: z.y, kind: "ammo", life: 20 });
+        setMessage(isRed ? "RED BALL DEFEATED!" : "BLUE BALL DEFEATED!", 2600);
       } else if (z.type === "fire") {
-      // fire zombie: check if near unlit torch
-      for (const torch of s.torches) {
+        // fire zombie: check if near unlit torch
+        for (const torch of s.torches) {
           if (torch.lit) continue;
           const dx = torch.x - z.x, dy = torch.y - z.y;
           if (dx * dx + dy * dy < TORCH_LIGHT_RADIUS * TORCH_LIGHT_RADIUS) {
@@ -1732,14 +2460,20 @@ export function ZombieGame() {
               }
               s.zombies.length = 0;
               s.zombiesAlive = 0;
-              s.zombiesToSpawn = -1;
-              setMessage("ASCEND", 2200);
-              setTimeout(() => enterBossMap(), 1600);
+              s.zombiesToSpawn = Math.floor(6 + s.round * 4 + Math.pow(s.round, 1.4));
+              // spawn dark ether portal at core totem position
+              s.portalActive = true;
+              s.portalPos = { x: MAP_W / 2, y: SURFACE_CENTER_Y };
+              // spawn glowing crate at random position on map
+              const gcX = 200 + Math.random() * (MAP_W - 400);
+              const gcY = 200 + Math.random() * (SURFACE_CENTER_Y * 2 - 400);
+              s.glowingCrate = { x: gcX, y: gcY, w: 44, h: 44, hp: 3 };
+              setMessage("THE DARK AETHER CALLS...", 3000);
             }
           }
         }
       }
-      setUiState((u) => ({ ...u, points: s.points, zombiesLeft: Math.max(0, s.zombiesToSpawn) + s.zombiesAlive }));
+      setUiState((u) => ({ ...u, points: s.points, points2: s.points2, zombiesLeft: Math.max(0, s.zombiesToSpawn) + s.zombiesAlive }));
     }
 
     function enterBossMap() {
@@ -1781,14 +2515,20 @@ export function ZombieGame() {
         lastShot: performance.now() + 3000,
         phase: 1, lastCharge: performance.now() + 7000,
         charging: false, chargeDirX: 0, chargeDirY: 0, chargeTimer: 0,
+        lastUnderworldSpawn: performance.now() + 2500,
       };
       setMessage("BOSS: THE HARBINGER", 3000);
-      setUiState((u) => ({ ...u, round: 999, zombiesLeft: 1, hp: s.player.hp }));
+      setUiState((u) => ({ ...u, round: 999, actualRound: s.round, zombiesLeft: 1, hp: s.player.hp }));
     }
 
     function update(dt: number) {
       if (!s.started || s.gameOver) return;
 
+      // Poll gamepad for player 2
+      pollGamepad();
+
+      // ─── Player 1 movement (skip if dead) ────────────────────────────────
+      if (s.player.hp > 0) {
       // movement
       let mx = 0, my = 0;
       if (s.keys["w"] || s.keys["arrowup"]) my -= 1;
@@ -1803,6 +2543,19 @@ export function ZombieGame() {
       (s as any)._resolveObstacles(s.player, s.player.r);
       s.player.y = Math.max(20, Math.min(MAP_H - 20, s.player.y + my * sp));
       (s as any)._resolveObstacles(s.player, s.player.r);
+      // glowing crate collision
+      if (s.glowingCrate) {
+        const gc = s.glowingCrate;
+        const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
+        const dx = s.player.x - gcCx, dy = s.player.y - gcCy;
+        const dist = Math.hypot(dx, dy);
+        const minDist = s.player.r + Math.max(gc.w, gc.h) / 2;
+        if (dist < minDist && dist > 0) {
+          const push = minDist - dist;
+          s.player.x += (dx / dist) * push;
+          s.player.y += (dy / dist) * push;
+        }
+      }
       // boss arena bounds
       if (s.bossMode) {
         const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
@@ -1810,17 +2563,77 @@ export function ZombieGame() {
         s.player.x = Math.max(cx - half, Math.min(cx + half, s.player.x));
         s.player.y = Math.max(cy - half, Math.min(cy + half, s.player.y));
       }
+      } // end P1 alive check
 
-      // world mouse
-      s.mouse.worldX = s.mouse.x + s.camera.x;
-      s.mouse.worldY = s.mouse.y + s.camera.y;
+      // ─── Player 2 movement (split-screen) ──────────────────────────────────
+      if (s.gameMode === "split" && s.player2Alive) {
+        const p2mx = s._p2MoveX;
+        const p2my = s._p2MoveY;
+        const p2len = Math.hypot(p2mx, p2my);
+        let p2dx = 0, p2dy = 0;
+        if (p2len > 0) { p2dx = p2mx / p2len; p2dy = p2my / p2len; }
+        const p2sp = s.player2.speed * dt;
+        s.player2.x = Math.max(20, Math.min(MAP_W - 20, s.player2.x + p2dx * p2sp));
+        (s as any)._resolveObstacles(s.player2, s.player2.r);
+        s.player2.y = Math.max(20, Math.min(MAP_H - 20, s.player2.y + p2dy * p2sp));
+        (s as any)._resolveObstacles(s.player2, s.player2.r);
+        // glowing crate collision
+        if (s.glowingCrate) {
+          const gc = s.glowingCrate;
+          const gcCx = gc.x + gc.w / 2, gcCy = gc.y + gc.h / 2;
+          const dx2 = s.player2.x - gcCx, dy2 = s.player2.y - gcCy;
+          const dist2 = Math.hypot(dx2, dy2);
+          const minDist2 = s.player2.r + Math.max(gc.w, gc.h) / 2;
+          if (dist2 < minDist2 && dist2 > 0) {
+            const push2 = minDist2 - dist2;
+            s.player2.x += (dx2 / dist2) * push2;
+            s.player2.y += (dy2 / dist2) * push2;
+          }
+        }
+        // boss arena bounds for P2
+        if (s.bossMode) {
+          const cx = MAP_W / 2, cy = SURFACE_CENTER_Y;
+          const half = BOSS_ARENA_SIZE / 2 - s.player2.r;
+          s.player2.x = Math.max(cx - half, Math.min(cx + half, s.player2.x));
+          s.player2.y = Math.max(cy - half, Math.min(cy + half, s.player2.y));
+        }
+        // P2 shooting
+        if (s.mouse2.down) {
+          const w2 = WEAPONS[s.currentWeaponKey2];
+          if (w2.auto) shoot2();
+          else if (performance.now() - s.lastShot2 > w2.fireRate) shoot2();
+        }
+        // P2 reload finish
+        if (s.reloadingUntil2 > 0 && performance.now() >= s.reloadingUntil2) {
+          s.reloadingUntil2 = 0;
+          finishReload2();
+        }
+        // P2 walk bob
+        if (p2len > 0) s.walkPhase2 += dt * 12;
+        // P2 muzzle flash decay
+        s.muzzleFlash2 = Math.max(0, s.muzzleFlash2 - dt * 12);
+        s.hitFlash2 *= 0.9;
+      }
+
+      // world mouse (account for zoom)
+      const zoom = settingsRef.current.cameraZoom === "zoomed" ? 1.4 : 1;
+      const px = s.player.x - s.camera.x;
+      const py = s.player.y - s.camera.y;
+      s.mouse.worldX = (s.mouse.x - px) / zoom + px + s.camera.x;
+      s.mouse.worldY = (s.mouse.y - py) / zoom + py + s.camera.y;
       s.player.angle = Math.atan2(s.mouse.worldY - s.player.y, s.mouse.worldX - s.player.x);
 
       // cave generator: stay close for 20s to restore power
       if (s.generator && !s.generator.active) {
-        const genDist = Math.hypot(s.player.x - s.generator.x, s.player.y - s.generator.y);
-        const inRange = genDist <= GENERATOR_INTERACT_DISTANCE;
-        if (inRange) {
+        const genDist1 = Math.hypot(s.player.x - s.generator.x, s.player.y - s.generator.y);
+        const inRange1 = genDist1 <= GENERATOR_INTERACT_DISTANCE;
+        let inRange2 = false;
+        if (s.gameMode === "split" && s.player2Alive) {
+          const genDist2 = Math.hypot(s.player2.x - s.generator.x, s.player2.y - s.generator.y);
+          inRange2 = genDist2 <= GENERATOR_INTERACT_DISTANCE;
+        }
+        const anyInRange = inRange1 || inRange2;
+        if (anyInRange) {
           if (!s.generatorHintShown) {
             setMessage("STAY CLOSE TO POWER THE GENERATOR", 1800);
             s.generatorHintShown = true;
@@ -1842,6 +2655,119 @@ export function ZombieGame() {
         } else {
           s.generator.progressMs = 0;
           s.generatorHintShown = false;
+        }
+      }
+
+      // door hold-to-pay-half (player 1)
+      if (s._doorHoldStartP1 > 0 && performance.now() - s._doorHoldStartP1 >= DOOR_HOLD_MS) {
+        s._doorHoldStartP1 = 0;
+        for (const o of s.obstacles) {
+          if (o.type !== "door" && o.type !== "golfDoor") continue;
+          const cost = o.type === "door" ? CAVE_DOOR_COST : GOLF_DOOR_COST;
+          const dx = o.x + o.w / 2 - s.player.x, dy = o.y + o.h / 2 - s.player.y;
+          if (dx * dx + dy * dy < 90 * 90) {
+            const remaining = cost - (o.paid || 0);
+            const half = Math.ceil(remaining / 2);
+            if (s.points >= half) {
+              s.points -= half;
+              o.paid = (o.paid || 0) + half;
+              soundEngine.buyWeapon();
+              if (o.paid >= cost) {
+                openDoor(o, 1);
+              } else {
+                setMessage(`PAID ${o.paid}/${cost} - ${cost - o.paid} LEFT`, 2200, 1);
+              }
+            } else {
+              setMessage(`Need ${half} points for half`, 1800, 1);
+            }
+            break;
+          }
+        }
+      }
+
+      // door hold-to-pay-half (player 2)
+      if (s.gameMode === "split" && s._doorHoldStartP2 > 0 && performance.now() - s._doorHoldStartP2 >= DOOR_HOLD_MS) {
+        s._doorHoldStartP2 = 0;
+        for (const o of s.obstacles) {
+          if (o.type !== "door" && o.type !== "golfDoor") continue;
+          const cost = o.type === "door" ? CAVE_DOOR_COST : GOLF_DOOR_COST;
+          const dx = o.x + o.w / 2 - s.player2.x, dy = o.y + o.h / 2 - s.player2.y;
+          if (dx * dx + dy * dy < 90 * 90) {
+            const remaining = cost - (o.paid || 0);
+            const half = Math.ceil(remaining / 2);
+            if (s.points2 >= half) {
+              s.points2 -= half;
+              o.paid = (o.paid || 0) + half;
+              soundEngine.buyWeapon();
+              if (o.paid >= cost) {
+                openDoor(o, 2);
+              } else {
+                setMessage(`PAID ${o.paid}/${cost} - ${cost - o.paid} LEFT`, 2200, 2);
+              }
+            } else {
+              setMessage(`Need ${half} points for half`, 1800, 2);
+            }
+            break;
+          }
+        }
+      }
+
+      // ─── Revive hold (split-screen only) ──────────────────────────────────
+      if (s.gameMode === "split" && s._reviveHoldStart > 0) {
+        // Check proximity is still valid (use larger radius to avoid flickering reset)
+        let stillNear = false;
+        if (s._reviveTarget === 1 && s.player.hp <= 0 && s.player2Alive) {
+          const dx = s.player.x - s.player2.x, dy = s.player.y - s.player2.y;
+          stillNear = dx * dx + dy * dy < 120 * 120;
+        } else if (s._reviveTarget === 2 && !s.player2Alive && s.player.hp > 0) {
+          const dx = s.player2.x - s.player.x, dy = s.player2.y - s.player.y;
+          stillNear = dx * dx + dy * dy < 120 * 120;
+        }
+        if (!stillNear) {
+          s._reviveHoldStart = 0;
+          s._reviveTarget = 0;
+        } else {
+          const elapsed = performance.now() - s._reviveHoldStart;
+          if (elapsed >= REVIVE_HOLD_MS) {
+            const target = s._reviveTarget;
+            s._reviveHoldStart = 0;
+            s._reviveTarget = 0;
+            // Revive the downed player
+            if (target === 1 && s.player.hp <= 0) {
+              s.player.hp = REVIVE_HP;
+              soundEngine.buyWeapon();
+              setMessage("PLAYER 1 REVIVED", 2200, 2);
+              setUiState((u) => ({ ...u, hp: REVIVE_HP }));
+            } else if (target === 2 && !s.player2Alive) {
+              s.player2.hp = REVIVE_HP;
+              s.player2Alive = true;
+              soundEngine.buyWeapon();
+              setMessage("PLAYER 2 REVIVED", 2200, 1);
+              setUiState((u) => ({ ...u, hp2: REVIVE_HP }));
+            }
+          }
+        }
+      }
+
+      // ─── Auto-detect revive start (key held near downed player) ───────────
+      // P1 holding E near downed P2
+      if (s.gameMode === "split" && s._reviveHoldStart === 0 && s._reviveTarget === 0 && s.player.hp > 0 && !s.player2Alive && s.keys["e"]) {
+        const dx = s.player2.x - s.player.x, dy = s.player2.y - s.player.y;
+        if (dx * dx + dy * dy < 90 * 90) {
+          s._reviveHoldStart = performance.now();
+          s._reviveTarget = 2;
+        }
+      }
+      // P2 holding Y near downed P1
+      if (s.gameMode === "split" && s._reviveHoldStart === 0 && s._reviveTarget === 0 && s.player2Alive && s.player.hp <= 0) {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = gamepads[s.controllerIndex];
+        if (gp && !!(gp.buttons[3]?.pressed)) {
+          const dx = s.player.x - s.player2.x, dy = s.player.y - s.player2.y;
+          if (dx * dx + dy * dy < 90 * 90) {
+            s._reviveHoldStart = performance.now();
+            s._reviveTarget = 1;
+          }
         }
       }
 
@@ -1876,6 +2802,22 @@ export function ZombieGame() {
             ball.y = GOLF_ROOM_RECT.y + GOLF_ROOM_RECT.h - WALL_T - BALL_RADIUS;
             ball.vy = -Math.abs(ball.vy) * BOUNCE;
           }
+          // bounce off buy stations
+          for (const b of s.buyStations) {
+            const bw = 40, bh = 40;
+            if (ball.x + BALL_RADIUS > b.x - bw && ball.x - BALL_RADIUS < b.x + bw &&
+                ball.y + BALL_RADIUS > b.y - bh && ball.y - BALL_RADIUS < b.y + bh) {
+              const overlapL = (ball.x + BALL_RADIUS) - (b.x - bw);
+              const overlapR = (b.x + bw) - (ball.x - BALL_RADIUS);
+              const overlapT = (ball.y + BALL_RADIUS) - (b.y - bh);
+              const overlapB = (b.y + bh) - (ball.y - BALL_RADIUS);
+              const minO = Math.min(overlapL, overlapR, overlapT, overlapB);
+              if (minO === overlapL) { ball.x = b.x - bw - BALL_RADIUS; ball.vx = -Math.abs(ball.vx) * BOUNCE; }
+              else if (minO === overlapR) { ball.x = b.x + bw + BALL_RADIUS; ball.vx = Math.abs(ball.vx) * BOUNCE; }
+              else if (minO === overlapT) { ball.y = b.y - bh - BALL_RADIUS; ball.vy = -Math.abs(ball.vy) * BOUNCE; }
+              else { ball.y = b.y + bh + BALL_RADIUS; ball.vy = Math.abs(ball.vy) * BOUNCE; }
+            }
+          }
           // check hole
           for (let hi = 0; hi < s.golfHoles.length; hi++) {
             const h = s.golfHoles[hi];
@@ -1899,24 +2841,27 @@ export function ZombieGame() {
             ];
           } else {
             s.golfCompleted = true;
-            setMessage("MINI GOLF COMPLETE! +2000 PTS", 3000);
+            setMessage("MINI GOLF COMPLETE! +2000 PTS", 3000, 0);
             s.points += 2000;
+            s.points2 += 2000;
             syncWeaponUi();
           }
         }
       }
 
       // reload finish
-      if (s.reloadingUntil > 0 && performance.now() >= s.reloadingUntil) {
+      if (s.player.hp > 0 && s.reloadingUntil > 0 && performance.now() >= s.reloadingUntil) {
         s.reloadingUntil = 0;
         finishReload();
       }
 
       // shoot
-      const w = WEAPONS[s.currentWeaponKey];
-      if (s.mouse.down) {
-        if (w.auto) shoot();
-        else if (performance.now() - s.lastShot > w.fireRate) shoot();
+      if (s.player.hp > 0) {
+        const w = WEAPONS[s.currentWeaponKey];
+        if (s.mouse.down) {
+          if (w.auto) shoot();
+          else if (performance.now() - s.lastShot > w.fireRate) shoot();
+        }
       }
 
       // bullets
@@ -1931,7 +2876,7 @@ export function ZombieGame() {
         if (hitObsIdx >= 0) {
           hit = true;
           const obs = s.obstacles[hitObsIdx];
-          if (obs.type === "barrel" && obs.hp !== undefined) {
+          if ((obs.type === "barrel" || obs.type === "toxicBarrel") && obs.hp !== undefined) {
             obs.hp -= b.dmg;
             soundEngine.barrelHit();
             // sparks
@@ -1944,7 +2889,7 @@ export function ZombieGame() {
             }
             if (obs.hp <= 0) {
               const cx = obs.x + obs.w / 2, cy = obs.y + obs.h / 2;
-              explodeBarrel(cx, cy);
+              explodeBarrel(cx, cy, obs.type === "toxicBarrel");
             }
           } else {
             soundEngine.obstacleHit();
@@ -1954,6 +2899,46 @@ export function ZombieGame() {
                 x: b.x, y: b.y, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
                 life: 0.25, maxLife: 0.25, color: "#888", size: 2 + Math.random() * 2,
               });
+            }
+          }
+        }
+        // glowing crate hit
+        if (!hit && s.glowingCrate) {
+          const gc = s.glowingCrate;
+          if (b.x >= gc.x && b.x <= gc.x + gc.w && b.y >= gc.y && b.y <= gc.y + gc.h) {
+            hit = true;
+            gc.hp--;
+            soundEngine.obstacleHit();
+            for (let k = 0; k < 5; k++) {
+              const a = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: b.x, y: b.y, vx: Math.cos(a) * 80, vy: Math.sin(a) * 80,
+                life: 0.3, maxLife: 0.3, color: Math.random() < 0.5 ? "#a060ff" : "#c080ff", size: 3,
+              });
+            }
+            if (gc.hp <= 0) {
+              // drop 3 ammo and 2 health
+              for (let i = 0; i < 3; i++) {
+                s.pickups.push({ x: gc.x + gc.w / 2 + (Math.random() - 0.5) * 30, y: gc.y + gc.h / 2 + (Math.random() - 0.5) * 30, kind: "ammo", life: 20 });
+              }
+              for (let i = 0; i < 2; i++) {
+                s.pickups.push({ x: gc.x + gc.w / 2 + (Math.random() - 0.5) * 30, y: gc.y + gc.h / 2 + (Math.random() - 0.5) * 30, kind: "health", life: 20 });
+              }
+              // explosion particles
+              for (let k = 0; k < 20; k++) {
+                const a = Math.random() * Math.PI * 2;
+                const sp = 60 + Math.random() * 140;
+                s.particles.push({
+                  x: gc.x + gc.w / 2, y: gc.y + gc.h / 2,
+                  vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                  life: 0.6, maxLife: 0.6,
+                  color: Math.random() < 0.3 ? "#ffcc44" : Math.random() < 0.6 ? "#a060ff" : "#c080ff",
+                  size: 3 + Math.random() * 3,
+                });
+              }
+              s.camera.shake = Math.min(s.camera.shake + 6, 12);
+              setMessage("SUPPLY CRATE DESTROYED!", 2000);
+              s.glowingCrate = null;
             }
           }
         }
@@ -1976,13 +2961,44 @@ export function ZombieGame() {
             break;
           }
         }
+        // target ball hit detection
+        if (!hit) for (const tb of s.golfTargetBalls) {
+          if (tb.spawned) continue;
+          const dx = tb.x - b.x, dy = tb.y - b.y;
+          if (dx * dx + dy * dy < 18 * 18) {
+            hit = true;
+            tb.spawned = true;
+            const zType = tb.color === "red" ? "redPoolMiniboss" : "bluePoolMiniboss";
+            const hp = (30 + s.round * 15) * 3;
+            const speed = 55 + s.round * 3;
+            const radius = 22;
+            s.zombies.push({ x: tb.x, y: tb.y, hp, maxHp: hp, speed, radius, type: zType });
+            s.zombiesAlive++;
+            s.lastPoolMinibossShot = performance.now();
+            soundEngine.bossEnrage();
+            setMessage(tb.color === "red" ? "RED BALL MINIBOSS!" : "BLUE BALL MINIBOSS!", 2600);
+            // explosion particles on transform
+            for (let k = 0; k < 20; k++) {
+              const a = Math.random() * Math.PI * 2;
+              const sp = 60 + Math.random() * 150;
+              s.particles.push({
+                x: tb.x, y: tb.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: 0.5 + Math.random() * 0.4, maxLife: 0.9,
+                color: tb.color === "red" ? (Math.random() < 0.5 ? "#ff4422" : "#cc2200") : (Math.random() < 0.5 ? "#4488ff" : "#2244cc"),
+                size: 3 + Math.random() * 4,
+              });
+            }
+            s.camera.shake = Math.min(s.camera.shake + 10, 16);
+            break;
+          }
+        }
         if (!hit) for (let j = s.zombies.length - 1; j >= 0; j--) {
           const z = s.zombies[j];
           const dx = z.x - b.x, dy = z.y - b.y;
           if (dx * dx + dy * dy < z.radius * z.radius) {
             z.hp -= b.dmg;
             hit = true;
-            s.shotsHit++;
+            if (b.owner === 2) s.shotsHit2++; else s.shotsHit++;
             soundEngine.zombieHit();
             for (let k = 0; k < 5; k++) {
               const a = Math.random() * Math.PI * 2;
@@ -1993,7 +3009,8 @@ export function ZombieGame() {
             }
             if (z.hp <= 0) {
               s.zombies.splice(j, 1);
-              killZombie(z);
+              killZombie(z, false, b.owner || 1);
+              if (b.owner === 2) s.shotsHit++;
             }
             break;
           }
@@ -2005,8 +3022,10 @@ export function ZombieGame() {
 
       // zombies
       const caveDoorClosed = s.obstacles.some((o) => o.type === "door");
+      const ghostDespawnList: Zombie[] = [];
       for (const z of s.zombies) {
-        const dx = s.player.x - z.x, dy = s.player.y - z.y;
+        const target = getZombiePursuitTarget(z);
+        const dx = target.x - z.x, dy = target.y - z.y;
         const d = Math.hypot(dx, dy) || 1;
         let dirX = dx / d, dirY = dy / d;
 
@@ -2043,15 +3062,41 @@ export function ZombieGame() {
           z.x = Math.max(CAVE_RECT.x + z.radius + 2, Math.min(CAVE_RECT.x + CAVE_RECT.w - z.radius - 2, z.x));
           (s as any)._resolveObstacles(z, z.radius);
         }
-        if (d < z.radius + s.player.r) {
-          damagePlayer(z.type === "brute" ? 25 : z.type === "fireMiniboss" ? 20 : z.type === "toxicMiniboss" ? 18 : z.type === "runner" ? 12 : 15);
+        // ghosts cannot leave the cave — despawn at the doorway
+        if (z.type === "ghost" && z.y < CAVE_RECT.y + 10) {
+          ghostDespawnList.push(z);
         }
-        // fireMiniboss: shoot fireball every 4 seconds
+        const playerDx = s.player.x - z.x, playerDy = s.player.y - z.y;
+        const playerDist = Math.hypot(playerDx, playerDy) || 1;
+        if (s.player.hp > 0 && playerDist < z.radius + s.player.r) {
+          damagePlayer(z.type === "brute" ? 25 : z.type === "fireMiniboss" ? 20 : z.type === "toxicMiniboss" ? 18 : z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss" ? 18 : z.type === "runner" ? 12 : z.type === "ghost" || z.type === "underworld" ? 10 : 15);
+        }
+        // Player 2 collision
+        if (s.gameMode === "split" && s.player2Alive) {
+          const p2dx = s.player2.x - z.x, p2dy = s.player2.y - z.y;
+          const p2dist = Math.hypot(p2dx, p2dy) || 1;
+          if (p2dist < z.radius + s.player2.r) {
+            damagePlayer2(z.type === "brute" ? 25 : z.type === "fireMiniboss" ? 20 : z.type === "toxicMiniboss" ? 18 : z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss" ? 18 : z.type === "runner" ? 12 : z.type === "ghost" || z.type === "underworld" ? 10 : 15);
+          }
+        }
+        // fireMiniboss: shoot fireball every 4 seconds (target closest player)
         if (z.type === "fireMiniboss") {
           const now = performance.now();
           if (now - s.lastMinibossShot > 4000) {
             s.lastMinibossShot = now;
-            const a = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+            // Find closest player for targeting
+            let targetPx = z.x, targetPy = z.y;
+            let targetFound = false;
+            if (s.player.hp > 0) {
+              targetPx = s.player.x; targetPy = s.player.y;
+              targetFound = true;
+            }
+            if (s.gameMode === "split" && s.player2Alive) {
+              const d1 = targetFound ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
+              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
+              if (d2 < d1) { targetPx = s.player2.x; targetPy = s.player2.y; }
+            }
+            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
             s.bossBullets.push({
               x: z.x + Math.cos(a) * z.radius,
               y: z.y + Math.sin(a) * z.radius,
@@ -2073,12 +3118,21 @@ export function ZombieGame() {
             }
           }
         }
-        // toxicMiniboss: throw toxic gas cloud every 3 seconds
+        // toxicMiniboss: throw toxic gas cloud every 3 seconds (target closest player)
         if (z.type === "toxicMiniboss") {
           const now = performance.now();
           if (now - s.lastToxicMinibossShot > 3000) {
             s.lastToxicMinibossShot = now;
-            const a = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+            let targetPx = z.x, targetPy = z.y;
+            if (s.player.hp > 0) {
+              targetPx = s.player.x; targetPy = s.player.y;
+            }
+            if (s.gameMode === "split" && s.player2Alive) {
+              const d1 = s.player.hp > 0 ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
+              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
+              if (d2 < d1) { targetPx = s.player2.x; targetPy = s.player2.y; }
+            }
+            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
             const throwSpeed = 170;
             s.toxicProjectiles.push({
               x: z.x + Math.cos(a) * z.radius,
@@ -2086,7 +3140,7 @@ export function ZombieGame() {
               vx: Math.cos(a) * throwSpeed,
               vy: Math.sin(a) * throwSpeed,
               distTraveled: 0,
-              maxDist: 50,
+              maxDist: 100,
             });
             s.camera.shake = Math.min(s.camera.shake + 3, 10);
             // throw spawn particles
@@ -2100,6 +3154,52 @@ export function ZombieGame() {
               });
             }
           }
+        }
+        // redPoolMiniboss / bluePoolMiniboss: shoot colored pool ball every 2 seconds (target closest player)
+        if (z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss") {
+          const now = performance.now();
+          if (now - s.lastPoolMinibossShot > 2000) {
+            s.lastPoolMinibossShot = now;
+            let targetPx = z.x, targetPy = z.y;
+            if (s.player.hp > 0) {
+              targetPx = s.player.x; targetPy = s.player.y;
+            }
+            if (s.gameMode === "split" && s.player2Alive) {
+              const d1 = s.player.hp > 0 ? Math.hypot(s.player.x - z.x, s.player.y - z.y) : Infinity;
+              const d2 = Math.hypot(s.player2.x - z.x, s.player2.y - z.y);
+              if (d2 < d1) { targetPx = s.player2.x; targetPy = s.player2.y; }
+            }
+            const a = Math.atan2(targetPy - z.y, targetPx - z.x);
+            const ballColor = z.type === "redPoolMiniboss" ? "#ff3322" : "#3366ff";
+            s.bossBullets.push({
+              x: z.x + Math.cos(a) * z.radius,
+              y: z.y + Math.sin(a) * z.radius,
+              vx: Math.cos(a) * 350,
+              vy: Math.sin(a) * 350,
+              life: 3.0,
+              dmg: 18,
+              color: ballColor,
+            });
+            s.camera.shake = Math.min(s.camera.shake + 4, 12);
+            // pool ball spawn particles
+            for (let k = 0; k < 6; k++) {
+              const pa = Math.random() * Math.PI * 2;
+              s.particles.push({
+                x: z.x + Math.cos(a) * z.radius, y: z.y + Math.sin(a) * z.radius,
+                vx: Math.cos(pa) * 50, vy: Math.sin(pa) * 50,
+                life: 0.3, maxLife: 0.3,
+                color: ballColor, size: 3,
+              });
+            }
+          }
+        }
+      }
+      // remove ghosts that tried to leave the cave
+      for (const g of ghostDespawnList) {
+        const i = s.zombies.indexOf(g);
+        if (i !== -1) {
+          s.zombies.splice(i, 1);
+          s.zombiesAlive--;
         }
       }
       // separate zombies
@@ -2118,8 +3218,8 @@ export function ZombieGame() {
         }
       }
 
-      // spawning (disabled in boss mode / transition)
-      if (!s.bossMode && s.totemPhase < 4 && s.zombiesToSpawn > 0) {
+      // spawning (disabled in boss mode)
+      if (!s.bossMode && s.totemPhase < 5 && s.zombiesToSpawn > 0) {
         s.spawnCooldown -= dt * 1000;
         if (s.spawnCooldown <= 0 && s.zombiesAlive < Math.min(24, 8 + s.round * 2)) {
           spawnZombie();
@@ -2128,11 +3228,72 @@ export function ZombieGame() {
         }
       }
       // fire zombie spawn
-      if (s.fireZombieToSpawn && !s.fireZombieAlive && !s.bossMode && s.totemPhase < 4) {
+      if (s.fireZombieToSpawn && !s.fireZombieAlive && !s.bossMode && s.totemPhase < 5) {
         spawnFireZombie();
         s.fireZombieToSpawn = false;
       }
-      if (!s.bossMode && s.totemPhase < 4 && s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
+      // ghost zombie spawn in dark cave (only when generator is off and player is inside cave)
+      if (s.started && !s.gameOver && !s.bossMode && s.generator && !s.generator.active && isInCave(s.player.x, s.player.y)) {
+        s.ghostSpawnTimer += dt;
+        if (s.ghostSpawnTimer >= 2.0) {
+          s.ghostSpawnTimer = 0;
+          spawnGhostZombie();
+        }
+      }
+      // despawn all ghosts when generator turns on
+      if (s.generator && s.generator.active) {
+        s.ghostSpawnTimer = 0;
+        for (let i = s.zombies.length - 1; i >= 0; i--) {
+          if (s.zombies[i].type === "ghost") {
+            s.zombies.splice(i, 1);
+            s.zombiesAlive--;
+          }
+        }
+      }
+      // portal phase: spawn fire and toxic zombies every 6s
+      if (s.portalActive && !s.bossMode && s.totemPhase === 4) {
+        s.portalSpawnTimer += dt;
+        if (s.portalSpawnTimer >= 6.0) {
+          s.portalSpawnTimer = 0;
+          // spawn a fire zombie
+          if (!s.fireZombieAlive) {
+            spawnFireZombie();
+          }
+          // spawn a toxic zombie (reuse fire zombie spawning logic with toxic type)
+          const toxHp = 30 + s.round * 15;
+          const toxSpeed = 45 + s.round * 3;
+          const toxRadius = 18;
+          let toxX = s.player.x, toxY = s.player.y;
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 700;
+            const x = s.player.x + Math.cos(angle) * dist;
+            const y = s.player.y + Math.sin(angle) * dist;
+            toxX = Math.max(50, Math.min(MAP_W - 50, x));
+            toxY = Math.max(50, Math.min(MAP_H - 50, y));
+            if (!isInCave(toxX, toxY)) break;
+          }
+          if (isInCave(toxX, toxY)) {
+            toxY = Math.max(50, CAVE_RECT.y - 120 - Math.random() * 160);
+          }
+          s.zombies.push({ x: toxX, y: toxY, hp: toxHp, maxHp: toxHp, speed: toxSpeed, radius: toxRadius, type: "toxic" });
+          s.zombiesAlive++;
+        }
+      }
+      // round continues during portal phase (advance when all zombies cleared)
+      if (!s.bossMode && s.portalActive && s.totemPhase === 4 && s.zombiesAlive === 0 && s.zombiesToSpawn === 0 && !s.portalRoundPending) {
+        s.portalRoundPending = true;
+        setTimeout(() => {
+          s.round++;
+          s.portalRoundPending = false;
+          s.zombiesAlive = 0;
+          s.zombiesToSpawn = Math.floor(6 + s.round * 4 + Math.pow(s.round, 1.4));
+          setMessage(`ROUND ${s.round}`, 2200);
+          soundEngine.roundStart();
+          setUiState((u) => ({ ...u, round: s.round, actualRound: s.round, zombiesLeft: s.zombiesToSpawn }));
+        }, 3000);
+      }
+      if (!s.bossMode && !s.portalActive && s.totemPhase < 5 && s.totemPhase !== 4 && s.zombiesToSpawn === 0 && s.zombiesAlive === 0) {
         setTimeout(() => startRound(s.round + 1), 3000);
         s.zombiesToSpawn = -1; // guard
       }
@@ -2157,6 +3318,15 @@ export function ZombieGame() {
           }
         }
 
+        // spawn underworld ghost zombies during phase 1 only (every 2.5s, max 7)
+        if (bs.phase === 1) {
+          const underworldCount = s.zombies.filter(z => z.type === "underworld").length;
+          if (now - bs.lastUnderworldSpawn > 2500 && underworldCount < 7) {
+            bs.lastUnderworldSpawn = now;
+            spawnUnderworldZombie();
+          }
+        }
+
         // sprint attack (phase 2): charge at player for 2s every 7s
         if (bs.phase === 2 && !bs.charging && now - bs.lastCharge > 7000) {
           bs.charging = true;
@@ -2171,8 +3341,14 @@ export function ZombieGame() {
 
         if (bs.charging) {
           bs.chargeTimer -= dt;
-          // track player direction each frame during sprint
-          const sdx = s.player.x - bs.x, sdy = s.player.y - bs.y;
+          // track closest player direction each frame during sprint
+          let chargeTargetX = s.player.x, chargeTargetY = s.player.y;
+          if (s.gameMode === "split" && s.player2Alive) {
+            const cd1 = Math.hypot(s.player.x - bs.x, s.player.y - bs.y);
+            const cd2 = Math.hypot(s.player2.x - bs.x, s.player2.y - bs.y);
+            if (cd2 < cd1) { chargeTargetX = s.player2.x; chargeTargetY = s.player2.y; }
+          }
+          const sdx = chargeTargetX - bs.x, sdy = chargeTargetY - bs.y;
           const sd = Math.hypot(sdx, sdy) || 1;
           bs.chargeDirX = sdx / sd;
           bs.chargeDirY = sdy / sd;
@@ -2191,9 +3367,11 @@ export function ZombieGame() {
             s.particles.push({ x: bs.x, y: bs.y, vx: Math.cos(aa) * 80, vy: Math.sin(aa) * 80, life: 0.3, maxLife: 0.3, color: "#ff6600", size: 3 });
           }
           // contact damage during sprint
-          const cdx = s.player.x - bs.x, cdy = s.player.y - bs.y;
-          if (cdx * cdx + cdy * cdy < (bs.radius + s.player.r + 10) * (bs.radius + s.player.r + 10)) {
-            damagePlayer(50);
+          if (s.player.hp > 0) {
+            const cdx = s.player.x - bs.x, cdy = s.player.y - bs.y;
+            if (cdx * cdx + cdy * cdy < (bs.radius + s.player.r + 10) * (bs.radius + s.player.r + 10)) {
+              damagePlayer(50);
+            }
           }
           // sprint ends
           if (bs.chargeTimer <= 0) {
@@ -2203,7 +3381,14 @@ export function ZombieGame() {
         }
 
         if (!bs.charging) {
-          const dx = s.player.x - bs.x, dy = s.player.y - bs.y;
+          let bossMoveTargetX = s.player.hp > 0 ? s.player.x : bs.x;
+          let bossMoveTargetY = s.player.hp > 0 ? s.player.y : bs.y;
+          if (s.gameMode === "split" && s.player2Alive) {
+            const bm1 = s.player.hp > 0 ? Math.hypot(s.player.x - bs.x, s.player.y - bs.y) : Infinity;
+            const bm2 = Math.hypot(s.player2.x - bs.x, s.player2.y - bs.y);
+            if (bm2 < bm1) { bossMoveTargetX = s.player2.x; bossMoveTargetY = s.player2.y; }
+          }
+          const dx = bossMoveTargetX - bs.x, dy = bossMoveTargetY - bs.y;
           const d = Math.hypot(dx, dy) || 1;
           let dirX = dx / d, dirY = dy / d;
           const look = bs.radius + 40;
@@ -2231,12 +3416,24 @@ export function ZombieGame() {
           const cx = MAP_W / 2, cy = SURFACE_CENTER_Y, half = BOSS_ARENA_SIZE / 2 - bs.radius;
           bs.x = Math.max(cx - half, Math.min(cx + half, bs.x));
           bs.y = Math.max(cy - half, Math.min(cy + half, bs.y));
-          if (d < bs.radius + s.player.r) damagePlayer(bs.phase === 2 ? 40 : 30);
-          // shoot
+          if (s.player.hp > 0 && d < bs.radius + s.player.r) damagePlayer(bs.phase === 2 ? 40 : 30);
+          // Player 2 boss contact damage
+          if (s.gameMode === "split" && s.player2Alive) {
+            const d2 = Math.hypot(s.player2.x - bs.x, s.player2.y - bs.y);
+            if (d2 < bs.radius + s.player2.r) damagePlayer2(bs.phase === 2 ? 40 : 30);
+          }
+          // shoot (target closest player)
           const shootInterval = bs.phase === 2 ? 3500 : 5000;
           if (now - bs.lastShot > shootInterval) {
             bs.lastShot = now;
-            const a = Math.atan2(s.player.y - bs.y, s.player.x - bs.x);
+            let bossTargetX = s.player.hp > 0 ? s.player.x : bs.x;
+            let bossTargetY = s.player.hp > 0 ? s.player.y : bs.y;
+            if (s.gameMode === "split" && s.player2Alive) {
+              const bd1 = s.player.hp > 0 ? Math.hypot(s.player.x - bs.x, s.player.y - bs.y) : Infinity;
+              const bd2 = Math.hypot(s.player2.x - bs.x, s.player2.y - bs.y);
+              if (bd2 < bd1) { bossTargetX = s.player2.x; bossTargetY = s.player2.y; }
+            }
+            const a = Math.atan2(bossTargetY - bs.y, bossTargetX - bs.x);
             const bulletCount = bs.phase === 2 ? 5 : 3;
             const spread = bs.phase === 2 ? 0.14 : 0.18;
             for (let i = -(bulletCount - 1) / 2; i <= (bulletCount - 1) / 2; i++) {
@@ -2257,7 +3454,7 @@ export function ZombieGame() {
           const bdx = bs.x - b.x, bdy = bs.y - b.y;
           if (bdx * bdx + bdy * bdy < bs.radius * bs.radius) {
             bs.hp -= b.dmg;
-            s.shotsHit++;
+            if (b.owner === 2) s.shotsHit2++; else s.shotsHit++;
             soundEngine.zombieHit();
             (bs as any).hitFlash = 1;
             (bs as any).hitShake = Math.min(12, ((bs as any).hitShake || 0) + 6);
@@ -2278,6 +3475,13 @@ export function ZombieGame() {
           }
           soundEngine.bossDeath();
           soundEngine.setMusic("menu");
+          // clear underworld zombies on boss death
+          for (let i = s.zombies.length - 1; i >= 0; i--) {
+            if (s.zombies[i].type === "underworld") {
+              s.zombies.splice(i, 1);
+              s.zombiesAlive--;
+            }
+          }
           s.boss = null;
           s.bossMode = false;
           s.won = true;
@@ -2286,6 +3490,7 @@ export function ZombieGame() {
           s.showingFireworks = true;
           s.fireworksTimer = 2.0;
           s.points += 5000;
+          s.points2 += 5000;
         }
       }
 
@@ -2293,10 +3498,21 @@ export function ZombieGame() {
       for (let i = s.bossBullets.length - 1; i >= 0; i--) {
         const b = s.bossBullets[i];
         b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-        const pdx = b.x - s.player.x, pdy = b.y - s.player.y;
-        if (pdx * pdx + pdy * pdy < (s.player.r + 4) * (s.player.r + 4)) {
-          damagePlayer(b.dmg);
-          s.bossBullets.splice(i, 1); continue;
+        // Player 1 boss bullet collision
+        if (s.player.hp > 0) {
+          const pdx = b.x - s.player.x, pdy = b.y - s.player.y;
+          if (pdx * pdx + pdy * pdy < (s.player.r + 4) * (s.player.r + 4)) {
+            damagePlayer(b.dmg);
+            s.bossBullets.splice(i, 1); continue;
+          }
+        }
+        // Player 2 boss bullet collision
+        if (s.gameMode === "split" && s.player2Alive) {
+          const p2dx = b.x - s.player2.x, p2dy = b.y - s.player2.y;
+          if (p2dx * p2dx + p2dy * p2dy < (s.player2.r + 4) * (s.player2.r + 4)) {
+            damagePlayer2(b.dmg);
+            s.bossBullets.splice(i, 1); continue;
+          }
         }
         if ((s as any)._bulletHitsObstacle(b.x, b.y) || b.life <= 0 || b.x < 0 || b.y < 0 || b.x > MAP_W || b.y > MAP_H) {
           s.bossBullets.splice(i, 1);
@@ -2314,13 +3530,38 @@ export function ZombieGame() {
               s.player.hp -= 8;
               s.hitFlash = Math.max(s.hitFlash, 0.5);
               if (s.player.hp <= 0) {
-                s.player.hp = 0; s.gameOver = true;
-        setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+                s.player.hp = 0;
+                const inCave = isInCave(s.player.x, s.player.y) && !s.generator.active;
+                if (inCave) {
+                  s.jumpscareUntil = performance.now() + 1500;
+                  soundEngine.jumpscare();
+                  s.camera.shake = 20;
+                } else {
+                  setUiState((u) => ({ ...u, hp: 0 }));
+                }
               } else {
                 setUiState((u) => ({ ...u, hp: s.player.hp }));
               }
             }
             break;
+          }
+          // Player 2 lava damage
+          if (s.gameMode === "split" && s.player2Alive) {
+            if (s.player2.x > l.x && s.player2.x < l.x + l.w && s.player2.y > l.y && s.player2.y < l.y + l.h) {
+              if (now - s.lastLavaDmg > 350) {
+                s.lastLavaDmg = now;
+                soundEngine.lavaBurn();
+                s.player2.hp -= 8;
+                s.hitFlash2 = Math.max(s.hitFlash2, 0.5);
+                if (s.player2.hp <= 0) {
+                  s.player2.hp = 0;
+                  s.player2Alive = false;
+                } else {
+                  setUiState((u) => ({ ...u, hp2: s.player2.hp }));
+                }
+              }
+              break;
+            }
           }
         }
       }
@@ -2377,11 +3618,37 @@ export function ZombieGame() {
             soundEngine.lavaBurn();
             s.player.hp -= 5;
             s.hitFlash = Math.max(s.hitFlash, 0.4);
-              if (s.player.hp <= 0) {
-                s.player.hp = 0; s.gameOver = true;
-                setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+            if (s.player.hp <= 0) {
+              s.player.hp = 0;
+              const inCave = isInCave(s.player.x, s.player.y) && !s.generator.active;
+              if (inCave) {
+                s.jumpscareUntil = performance.now() + 1500;
+                soundEngine.jumpscare();
+                s.camera.shake = 20;
               } else {
+                setUiState((u) => ({ ...u, hp: 0 }));
+              }
+            } else {
               setUiState((u) => ({ ...u, hp: s.player.hp }));
+            }
+          }
+        }
+        // Player 2 toxic gas damage
+        if (s.gameMode === "split" && s.player2Alive) {
+          const g2dx = s.player2.x - g.x, g2dy = s.player2.y - g.y;
+          if (g2dx * g2dx + g2dy * g2dy < g.radius * g.radius) {
+            const now = performance.now();
+            if (now - s.lastToxicDmg > 500) {
+              s.lastToxicDmg = now;
+              soundEngine.lavaBurn();
+              s.player2.hp -= 5;
+              s.hitFlash2 = Math.max(s.hitFlash2, 0.4);
+              if (s.player2.hp <= 0) {
+                s.player2.hp = 0;
+                s.player2Alive = false;
+              } else {
+                setUiState((u) => ({ ...u, hp2: s.player2.hp }));
+              }
             }
           }
         }
@@ -2410,6 +3677,24 @@ export function ZombieGame() {
           s.pickups.splice(i, 1);
           continue;
         }
+        // Player 2 pickup
+        if (s.gameMode === "split" && s.player2Alive) {
+          const p2dx = p.x - s.player2.x, p2dy = p.y - s.player2.y;
+          if (p2dx * p2dx + p2dy * p2dy < 30 * 30) {
+            soundEngine.pickup();
+            if (p.kind === "health") {
+              s.player2.hp = Math.min(s.player2.maxHp, s.player2.hp + 40);
+              setUiState((u) => ({ ...u, hp2: s.player2.hp }));
+            } else {
+              const pw = s.weapons2[s.currentWeaponKey2];
+              const ww = WEAPONS[s.currentWeaponKey2];
+              pw.reserve = Math.min(ww.reserve, pw.reserve + Math.floor(ww.magSize * 2));
+              syncWeaponUi2();
+            }
+            s.pickups.splice(i, 1);
+            continue;
+          }
+        }
         if (p.life <= 0) s.pickups.splice(i, 1);
       }
 
@@ -2423,8 +3708,9 @@ export function ZombieGame() {
         if (p.life <= 0) s.particles.splice(i, 1);
       }
 
-      // camera
-      const targetX = s.player.x - canvas.width / 2;
+      // camera (player 1)
+      const vpW = s.gameMode === "split" ? canvas.width / 2 : canvas.width;
+      const targetX = s.player.x - vpW / 2;
       const targetY = s.player.y - canvas.height / 2;
       s.camera.x += (targetX - s.camera.x) * 0.15;
       s.camera.y += (targetY - s.camera.y) * 0.15;
@@ -2435,11 +3721,26 @@ export function ZombieGame() {
         if (s.camera.shake < 0.1) s.camera.shake = 0;
       }
       s.hitFlash *= 0.9;
-      s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
-      // walk bob when moving
-      const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
-        s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
-      if (isMoving) s.walkPhase += dt * 12;
+      if (s.player.hp > 0) {
+        s.muzzleFlash = Math.max(0, s.muzzleFlash - dt * 12);
+        // walk bob when moving
+        const isMoving = (s.keys["w"] || s.keys["a"] || s.keys["s"] || s.keys["d"] ||
+          s.keys["arrowup"] || s.keys["arrowdown"] || s.keys["arrowleft"] || s.keys["arrowright"]);
+        if (isMoving) s.walkPhase += dt * 12;
+      }
+      // Camera 2 (player 2)
+      if (s.gameMode === "split") {
+        const t2x = s.player2.x - vpW / 2;
+        const t2y = s.player2.y - canvas.height / 2;
+        s.camera2.x += (t2x - s.camera2.x) * 0.15;
+        s.camera2.y += (t2y - s.camera2.y) * 0.15;
+        if (s.camera2.shake > 0) {
+          s.camera2.x += (Math.random() - 0.5) * s.camera2.shake;
+          s.camera2.y += (Math.random() - 0.5) * s.camera2.shake;
+          s.camera2.shake *= 0.85;
+          if (s.camera2.shake < 0.1) s.camera2.shake = 0;
+        }
+      }
     }
 
     function drawGrid() {
@@ -2549,24 +3850,38 @@ export function ZombieGame() {
       for (const b of s.buyStations) {
         const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
         if (sx < -100 || sy < -100 || sx > canvas.width + 100 || sy > canvas.height + 100) continue;
+        if (!isInFlashlight(b.x, b.y)) continue;
         const w = WEAPONS[b.weapon];
         const owned = s.weapons[b.weapon]?.owned;
+        const hasPower = !!s.generator?.active;
+        const isCurrent = s.currentWeaponKey === b.weapon;
         ctx.fillStyle = "#2a1a0a";
-        ctx.strokeStyle = owned ? "#4a7c3a" : "#c9a24a";
+        if (!hasPower) {
+          ctx.strokeStyle = "#c93030";
+        } else if (isCurrent) {
+          ctx.strokeStyle = "#c9a24a";
+        } else {
+          ctx.strokeStyle = "#4a7c3a";
+        }
         ctx.lineWidth = 3;
-        ctx.fillRect(sx - 40, sy - 40, 80, 80);
-        ctx.strokeRect(sx - 40, sy - 40, 80, 80);
-        ctx.fillStyle = "#c9a24a";
+        ctx.beginPath();
+        ctx.arc(sx, sy, 40, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = hasPower ? "#c9a24a" : "#888";
         ctx.font = "bold 11px monospace";
         ctx.textAlign = "center";
-        ctx.fillText(w.name.split(" ")[0].toUpperCase(), sx, sy - 5);
-        ctx.fillStyle = owned ? "#7fbf5f" : "#e0e0e0";
-        ctx.fillText(owned ? `REFILL ${Math.floor(w.cost * 0.5)}` : `${w.cost}`, sx, sy + 12);
-        const dx = b.x - s.player.x, dy = b.y - s.player.y;
+        ctx.fillText(w.name.toUpperCase(), sx, sy - 5);
+        if (hasPower) {
+          ctx.fillStyle = owned ? "#7fbf5f" : "#e0e0e0";
+          ctx.fillText(owned ? `REFILL ${Math.floor(w.cost * 0.5)}` : `${w.cost}`, sx, sy + 12);
+        }
+        const db = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+        const dx = b.x - db.x, dy = b.y - db.y;
         if (dx * dx + dy * dy < 100 * 100) {
           ctx.fillStyle = "#fff";
           ctx.font = "bold 12px monospace";
-          ctx.fillText("[E] BUY", sx, sy - 55);
+          ctx.fillText(hasPower ? "[E] BUY" : "POWER NEEDED", sx, sy - 55);
         }
       }
       for (const a of s.ammoBoxes) {
@@ -2574,14 +3889,17 @@ export function ZombieGame() {
         ctx.fillStyle = "#1a2a1a";
         ctx.strokeStyle = "#4a7c3a";
         ctx.lineWidth = 3;
-        ctx.fillRect(sx - 30, sy - 30, 60, 60);
-        ctx.strokeRect(sx - 30, sy - 30, 60, 60);
+        ctx.beginPath();
+        ctx.arc(sx, sy, 30, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
         ctx.fillStyle = "#4a7c3a";
         ctx.font = "bold 11px monospace";
         ctx.textAlign = "center";
         ctx.fillText("AMMO", sx, sy - 3);
         ctx.fillText("500", sx, sy + 12);
-        const dx = a.x - s.player.x, dy = a.y - s.player.y;
+        const da = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+        const dx = a.x - da.x, dy = a.y - da.y;
         if (dx * dx + dy * dy < 100 * 100) {
           ctx.fillStyle = "#fff";
           ctx.font = "bold 12px monospace";
@@ -2598,14 +3916,17 @@ export function ZombieGame() {
         ctx.fillStyle = "#1a2a1a";
         ctx.strokeStyle = `rgba(74,124,58,${pulse})`;
         ctx.lineWidth = 3;
-        ctx.fillRect(sx - 30, sy - 30, 60, 60);
-        ctx.strokeRect(sx - 30, sy - 30, 60, 60);
+        ctx.beginPath();
+        ctx.arc(sx, sy, 30, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
         ctx.fillStyle = "#4a7c3a";
         ctx.font = "bold 11px monospace";
         ctx.textAlign = "center";
         ctx.fillText("AMMO", sx, sy - 3);
         ctx.fillText("500", sx, sy + 12);
-        const dx = a.x - s.player.x, dy = a.y - s.player.y;
+        const dab = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+        const dx = a.x - dab.x, dy = a.y - dab.y;
         if (dx * dx + dy * dy < 100 * 100) {
           ctx.fillStyle = "#fff";
           ctx.font = "bold 12px monospace";
@@ -2629,32 +3950,36 @@ export function ZombieGame() {
       }
     }
 
-    function drawPlayer() {
-      const sx = s.player.x - s.camera.x, sy = s.player.y - s.camera.y;
-      const bob = Math.sin(s.walkPhase) * 1.5;
+    function drawPlayerAt(
+      px: number, py: number, angle: number, radius: number,
+      walkPhaseVal: number, muzzleFlashVal: number, isP2: boolean,
+    ) {
+      const sx = px - s.camera.x, sy = py - s.camera.y;
+      const bob = Math.sin(walkPhaseVal) * 1.5;
       // shadow
       ctx.fillStyle = "rgba(0,0,0,0.45)";
       ctx.beginPath();
-      ctx.ellipse(sx + 3, sy + 6, s.player.r + 2, (s.player.r + 2) * 0.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(sx + 3, sy + 6, radius + 2, (radius + 2) * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
       // aim laser
       const laserLen = 260;
-      const grd = ctx.createLinearGradient(sx, sy, sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
-      grd.addColorStop(0, "rgba(255,80,60,0.55)");
-      grd.addColorStop(1, "rgba(255,80,60,0)");
+      const grd = ctx.createLinearGradient(sx, sy, sx + Math.cos(angle) * laserLen, sy + Math.sin(angle) * laserLen);
+      const laserColor = isP2 ? "rgba(70,150,255," : "rgba(255,80,60,";
+      grd.addColorStop(0, laserColor + "0.55)");
+      grd.addColorStop(1, laserColor + "0)");
       ctx.strokeStyle = grd;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(sx + Math.cos(s.player.angle) * 22, sy + Math.sin(s.player.angle) * 22);
-      ctx.lineTo(sx + Math.cos(s.player.angle) * laserLen, sy + Math.sin(s.player.angle) * laserLen);
+      ctx.moveTo(sx + Math.cos(angle) * 22, sy + Math.sin(angle) * 22);
+      ctx.lineTo(sx + Math.cos(angle) * laserLen, sy + Math.sin(angle) * laserLen);
       ctx.stroke();
 
       ctx.save();
       ctx.translate(sx, sy + bob);
-      ctx.rotate(s.player.angle);
+      ctx.rotate(angle);
       // muzzle flash glow
-      if (s.muzzleFlash > 0.05) {
-        const mf = s.muzzleFlash;
+      if (muzzleFlashVal > 0.05) {
+        const mf = muzzleFlashVal;
         const g2 = ctx.createRadialGradient(30, 0, 0, 30, 0, 26);
         g2.addColorStop(0, `rgba(255,230,140,${0.9 * mf})`);
         g2.addColorStop(0.4, `rgba(255,150,50,${0.5 * mf})`);
@@ -2670,20 +3995,20 @@ export function ZombieGame() {
       ctx.fillStyle = "#1a1a1a";
       ctx.fillRect(28, -2, 4, 4);
       // body
-      ctx.fillStyle = "#4a5a3a";
+      ctx.fillStyle = isP2 ? "#3a4a6a" : "#4a5a3a";
       ctx.beginPath();
-      ctx.arc(0, 0, s.player.r, 0, Math.PI * 2);
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#2a3a1a";
+      ctx.strokeStyle = isP2 ? "#1a2a4a" : "#2a3a1a";
       ctx.lineWidth = 2;
       ctx.stroke();
       // shoulder highlight
       ctx.fillStyle = "rgba(255,255,255,0.08)";
       ctx.beginPath();
-      ctx.arc(-3, -4, s.player.r * 0.7, 0, Math.PI * 2);
+      ctx.arc(-3, -4, radius * 0.7, 0, Math.PI * 2);
       ctx.fill();
       // helmet
-      ctx.fillStyle = "#2a2a2a";
+      ctx.fillStyle = isP2 ? "#1a2a3a" : "#2a2a2a";
       ctx.beginPath();
       ctx.arc(0, 0, 9, 0, Math.PI * 2);
       ctx.fill();
@@ -2692,6 +4017,91 @@ export function ZombieGame() {
       ctx.arc(-2, -3, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+    }
+
+    function drawPlayer() {
+      // Draw P1 (or downed indicator)
+      if (s.player.hp > 0) {
+        drawPlayerAt(s.player.x, s.player.y, s.player.angle, s.player.r, s.walkPhase, s.muzzleFlash, false);
+      } else if (s.gameMode === "split" && s.player2Alive) {
+        // P1 downed
+        const sx = s.player.x - s.camera.x, sy = s.player.y - s.camera.y;
+        ctx.fillStyle = "rgba(255,60,60,0.35)";
+        ctx.beginPath();
+        ctx.arc(sx, sy, s.player.r + 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#aa3333";
+        ctx.beginPath();
+        ctx.arc(sx, sy, s.player.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#661a1a";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Revive progress arc or prompt
+        const dp = s.player2;
+        const ddx = s.player.x - dp.x, ddy = s.player.y - dp.y;
+        if (ddx * ddx + ddy * ddy < 110 * 110) {
+          if (s._reviveHoldStart > 0 && s._reviveTarget === 1) {
+            const progress = Math.min(1, (performance.now() - s._reviveHoldStart) / REVIVE_HOLD_MS);
+            ctx.beginPath();
+            ctx.arc(sx, sy, s.player.r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+            ctx.strokeStyle = "#ff6666";
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 11px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(`${Math.floor(progress * 100)}%`, sx, sy - s.player.r - 20);
+          } else {
+            ctx.fillStyle = "#ff6666";
+            ctx.font = "bold 11px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("HOLD [Y] REVIVE", sx, sy - s.player.r - 12);
+          }
+        }
+      }
+      // Draw P2 (or downed indicator)
+      if (s.gameMode === "split") {
+        if (s.player2Alive) {
+          drawPlayerAt(s.player2.x, s.player2.y, s.player2.angle, s.player2.r, s.walkPhase2, s.muzzleFlash2, true);
+        } else if (s.player.hp > 0) {
+          // P2 downed
+          const sx = s.player2.x - s.camera.x, sy = s.player2.y - s.camera.y;
+          ctx.fillStyle = "rgba(70,150,255,0.35)";
+          ctx.beginPath();
+          ctx.arc(sx, sy, s.player2.r + 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#3366aa";
+          ctx.beginPath();
+          ctx.arc(sx, sy, s.player2.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#1a3366";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          // Revive progress arc or prompt
+          const dp = s.player;
+          const ddx = s.player2.x - dp.x, ddy = s.player2.y - dp.y;
+          if (ddx * ddx + ddy * ddy < 110 * 110) {
+            if (s._reviveHoldStart > 0 && s._reviveTarget === 2) {
+              const progress = Math.min(1, (performance.now() - s._reviveHoldStart) / REVIVE_HOLD_MS);
+              ctx.beginPath();
+              ctx.arc(sx, sy, s.player2.r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+              ctx.strokeStyle = "#66aaff";
+              ctx.lineWidth = 4;
+              ctx.stroke();
+              ctx.fillStyle = "#fff";
+              ctx.font = "bold 11px monospace";
+              ctx.textAlign = "center";
+              ctx.fillText(`${Math.floor(progress * 100)}%`, sx, sy - s.player2.r - 20);
+            } else {
+              ctx.fillStyle = "#66aaff";
+              ctx.font = "bold 11px monospace";
+              ctx.textAlign = "center";
+              ctx.fillText("HOLD [E] REVIVE", sx, sy - s.player2.r - 12);
+            }
+          }
+        }
+      }
     }
 
     function drawObstacles() {
@@ -2793,12 +4203,19 @@ export function ZombieGame() {
           ctx.beginPath();
           ctx.arc(sx + o.w - 18, sy + o.h / 2, 4, 0, Math.PI * 2);
           ctx.fill();
-          const dx = o.x + o.w / 2 - s.player.x, dy = o.y + o.h / 2 - s.player.y;
+          const dp = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+          const dx = o.x + o.w / 2 - dp.x, dy = o.y + o.h / 2 - dp.y;
           if (dx * dx + dy * dy < 110 * 110) {
+            const remaining = CAVE_DOOR_COST - (o.paid || 0);
             ctx.fillStyle = "#fff";
             ctx.font = "bold 12px monospace";
             ctx.textAlign = "center";
-            ctx.fillText(`[E] OPEN ${CAVE_DOOR_COST}`, sx + o.w / 2, sy - 10);
+            ctx.fillText(`[E] OPEN ${remaining}`, sx + o.w / 2, sy - 10);
+            if (s.gameMode === "split") {
+              ctx.fillStyle = "#ccc";
+              ctx.font = "bold 9px monospace";
+              ctx.fillText(`HOLD [E] PAY HALF`, sx + o.w / 2, sy - 22);
+            }
           }
         } else if (o.type === "golfDoor") {
           const frame = ctx.createLinearGradient(sx, sy, sx, sy + o.h);
@@ -2826,38 +4243,76 @@ export function ZombieGame() {
           ctx.beginPath();
           ctx.arc(sx + o.w - 18, sy + o.h / 2, 4, 0, Math.PI * 2);
           ctx.fill();
-          const dx = o.x + o.w / 2 - s.player.x, dy = o.y + o.h / 2 - s.player.y;
-          if (dx * dx + dy * dy < 110 * 110) {
+          const dp2 = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+          const dx2 = o.x + o.w / 2 - dp2.x, dy2 = o.y + o.h / 2 - dp2.y;
+          if (dx2 * dx2 + dy2 * dy2 < 110 * 110) {
+            const remaining = GOLF_DOOR_COST - (o.paid || 0);
             ctx.fillStyle = "#fff";
             ctx.font = "bold 12px monospace";
             ctx.textAlign = "center";
-            ctx.fillText(`[E] OPEN ${GOLF_DOOR_COST}`, sx + o.w / 2, sy - 10);
+            ctx.fillText(`[E] OPEN ${remaining}`, sx + o.w / 2, sy - 10);
+            if (s.gameMode === "split") {
+              ctx.fillStyle = "#ccc";
+              ctx.font = "bold 9px monospace";
+              ctx.fillText(`HOLD [E] PAY HALF`, sx + o.w / 2, sy - 22);
+            }
           }
-        } else if (o.type === "barrel") {
+        } else if (o.type === "barrel" || (o.type === "toxicBarrel" && isInFlashlight(o.x + o.w / 2, o.y + o.h / 2))) {
           const cx = sx + o.w / 2, cy = sy + o.h / 2, r = o.w / 2;
           const hpRatio = o.hp !== undefined ? Math.max(0, o.hp / 50) : 1;
-          // barrel body darkens as it takes damage
-          const cr = Math.round(122 * hpRatio + 30 * (1 - hpRatio));
-          const cg = Math.round(42 * hpRatio);
-          const cb = Math.round(26 * hpRatio);
-          ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = "#2a0a05";
-          ctx.lineWidth = 2; ctx.stroke();
-          // warning stripe when damaged
-          if (hpRatio < 0.7) {
-            ctx.strokeStyle = hpRatio < 0.4 ? "#ff3300" : "#cc6600";
+          if (o.type === "toxicBarrel") {
+            // toxic barrel: green color scheme
+            const cr = Math.round(20 * hpRatio + 10 * (1 - hpRatio));
+            const cg = Math.round(120 * hpRatio + 30 * (1 - hpRatio));
+            const cb = Math.round(20 * hpRatio + 10 * (1 - hpRatio));
+            ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = "#0a2a0a";
+            ctx.lineWidth = 2; ctx.stroke();
+            // toxic bubble indicator
+            const pulse = 0.4 + Math.sin(performance.now() * 0.005) * 0.2;
+            const tgrd = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 1.8);
+            tgrd.addColorStop(0, `rgba(50,200,50,${0.3 * pulse})`);
+            tgrd.addColorStop(1, "rgba(30,120,30,0)");
+            ctx.fillStyle = tgrd;
+            ctx.beginPath(); ctx.arc(cx, cy, r * 1.8, 0, Math.PI * 2); ctx.fill();
+            // warning stripe when damaged
+            if (hpRatio < 0.7) {
+              ctx.strokeStyle = hpRatio < 0.4 ? "#ff3300" : "#33cc33";
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([3, 3]);
+              ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2); ctx.stroke();
+              ctx.setLineDash([]);
+            }
+            ctx.strokeStyle = "#1a4a1a";
             ctx.lineWidth = 1.5;
-            ctx.setLineDash([3, 3]);
-            ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2); ctx.stroke();
-            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
+            ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+            ctx.stroke();
+          } else {
+            // normal barrel: brown color scheme
+            const cr = Math.round(122 * hpRatio + 30 * (1 - hpRatio));
+            const cg = Math.round(42 * hpRatio);
+            const cb = Math.round(26 * hpRatio);
+            ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = "#2a0a05";
+            ctx.lineWidth = 2; ctx.stroke();
+            if (hpRatio < 0.7) {
+              ctx.strokeStyle = hpRatio < 0.4 ? "#ff3300" : "#cc6600";
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([3, 3]);
+              ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2); ctx.stroke();
+              ctx.setLineDash([]);
+            }
+            ctx.strokeStyle = "#4a1a0a";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
+            ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+            ctx.stroke();
           }
-          ctx.strokeStyle = "#4a1a0a";
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
-          ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
-          ctx.stroke();
         }
       }
     }
@@ -2867,11 +4322,15 @@ export function ZombieGame() {
       for (const z of s.zombies) {
         const sx = z.x - s.camera.x, sy = z.y - s.camera.y;
         if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+        const basicZombie = z.type === "walker" || z.type === "runner" || z.type === "brute";
+        const basicLit = !basicZombie || isInFlashlight(z.x, z.y);
         // shadow
-        ctx.fillStyle = "rgba(0,0,0,0.45)";
-        ctx.beginPath();
-        ctx.ellipse(sx + 3, sy + z.radius * 0.5, z.radius + 2, (z.radius + 2) * 0.45, 0, 0, Math.PI * 2);
-        ctx.fill();
+        if (basicLit) {
+          ctx.fillStyle = "rgba(0,0,0,0.45)";
+          ctx.beginPath();
+          ctx.ellipse(sx + 3, sy + z.radius * 0.5, z.radius + 2, (z.radius + 2) * 0.45, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
         const bob = Math.sin(now * 5 + (z.x + z.y) * 0.01) * 1.5;
         const cy = sy + bob;
         if (z.type === "fire") {
@@ -2921,6 +4380,52 @@ export function ZombieGame() {
           ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
           ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
           ctx.fill();
+        } else if (z.type === "toxic") {
+          // toxic zombie aura
+          const tpulse = 0.5 + Math.sin(now * 7) * 0.3;
+          const tgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 2.5);
+          tgrd.addColorStop(0, `rgba(50,200,50,${0.3 * tpulse})`);
+          tgrd.addColorStop(0.5, `rgba(30,160,30,${0.12 * tpulse})`);
+          tgrd.addColorStop(1, "rgba(20,120,20,0)");
+          ctx.fillStyle = tgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.5, 0, Math.PI * 2); ctx.fill();
+          // body
+          ctx.fillStyle = "#1a4a1a";
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // toxic bubbling spots
+          for (let bi = 0; bi < 4; bi++) {
+            const ba = (bi / 4) * Math.PI * 2 + now * 2;
+            const br = z.radius * 0.4 + Math.sin(now * 6 + bi) * 2;
+            const bx = sx + Math.cos(ba) * br;
+            const by = cy + Math.sin(ba) * br;
+            ctx.fillStyle = `rgba(100,255,100,${0.4 + tpulse * 0.2})`;
+            ctx.beginPath();
+            ctx.arc(bx, by, 2 + Math.sin(now * 9 + bi) * 1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          // outline
+          ctx.strokeStyle = "#33cc33";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // toxic eyes (green)
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.4);
+          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
+          const tglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 10);
+          tglow.addColorStop(0, "rgba(100,255,100,0.8)");
+          tglow.addColorStop(1, "rgba(50,200,50,0)");
+          ctx.fillStyle = tglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 10, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#66ff66";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
+          ctx.fill();
         } else if (z.type === "fireMiniboss") {
           // fire miniboss: large intense aura
           const fpulse = 0.6 + Math.sin(now * 10) * 0.4;
@@ -2948,23 +4453,16 @@ export function ZombieGame() {
             const fx = sx + Math.cos(fa) * fr * 0.6;
             const fy = cy - z.radius * 0.7 + Math.sin(now * 10 + fi * 2) * 5;
             ctx.fillStyle = fi % 2 === 0 ? `rgba(255,160,30,${0.7 + fpulse * 0.2})` : `rgba(255,60,10,${0.6 + fpulse * 0.2})`;
-            ctx.beginPath();
-            ctx.moveTo(fx - 4, fy + 5);
-            ctx.quadraticCurveTo(fx, fy - 12 + Math.sin(now * 14 + fi) * 4, fx + 4, fy + 5);
-            ctx.closePath(); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(fx - 4, fy + 5); ctx.quadraticCurveTo(fx, fy - 12 + Math.sin(now * 14 + fi) * 4, fx + 4, fy + 5); ctx.closePath(); ctx.fill();
           }
           // outline (thick, bright orange)
           ctx.strokeStyle = "#ff4400";
           ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.stroke();
           // secondary outline pulse
           ctx.strokeStyle = `rgba(255,100,0,${0.3 + fpulse * 0.3})`;
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2); ctx.stroke();
           // eye glow (intense red-orange)
           const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
           const ex = Math.cos(ang) * (z.radius * 0.4);
@@ -3022,22 +4520,16 @@ export function ZombieGame() {
             const bx = sx + Math.cos(ba) * br;
             const by = cy + Math.sin(ba) * br;
             ctx.fillStyle = `rgba(100,255,100,${0.5 + tpulse * 0.2})`;
-            ctx.beginPath();
-            ctx.arc(bx, by, 3 + Math.sin(now * 10 + bi) * 1.5, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(bx, by, 3 + Math.sin(now * 10 + bi) * 1.5, 0, Math.PI * 2); ctx.fill();
           }
           // outline (thick, bright green)
           ctx.strokeStyle = "#33cc33";
           ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius, 0, Math.PI * 2); ctx.stroke();
           // secondary outline pulse
           ctx.strokeStyle = `rgba(50,200,50,${0.3 + tpulse * 0.3})`;
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius + 4, 0, Math.PI * 2); ctx.stroke();
           // toxic eyes (bright green)
           const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
           const ex = Math.cos(ang) * (z.radius * 0.4);
@@ -3068,69 +4560,168 @@ export function ZombieGame() {
           ctx.font = "bold 10px monospace";
           ctx.textAlign = "center";
           ctx.fillText("TOXIC MINIBOSS", sx, barY - 4);
-        } else if (z.type === "toxic") {
-          // toxic zombie aura
-          const tpulse = 0.5 + Math.sin(now * 7) * 0.3;
-          const tgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 2.5);
-          tgrd.addColorStop(0, `rgba(50,200,50,${0.3 * tpulse})`);
-          tgrd.addColorStop(0.5, `rgba(30,160,30,${0.12 * tpulse})`);
-          tgrd.addColorStop(1, "rgba(20,120,20,0)");
-          ctx.fillStyle = tgrd;
-          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.5, 0, Math.PI * 2); ctx.fill();
-          // body
-          ctx.fillStyle = "#1a4a1a";
+        } else if (z.type === "ghost") {
+          // ghost zombie: translucent, ethereal blue-white glow
+          const ghostPulse = 0.4 + Math.sin(now * 4 + z.x * 0.01) * 0.2;
+          const ggrd = ctx.createRadialGradient(sx, cy, z.radius * 0.2, sx, cy, z.radius * 2.2);
+          ggrd.addColorStop(0, `rgba(150,200,255,${0.3 * ghostPulse})`);
+          ggrd.addColorStop(0.5, `rgba(100,150,220,${0.12 * ghostPulse})`);
+          ggrd.addColorStop(1, "rgba(80,120,200,0)");
+          ctx.fillStyle = ggrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.2, 0, Math.PI * 2); ctx.fill();
+          // translucent body
+          ctx.fillStyle = `rgba(180,210,255,${0.35 + ghostPulse * 0.15})`;
           ctx.beginPath();
           ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
           ctx.fill();
-          // toxic bubbling spots
-          for (let bi = 0; bi < 4; bi++) {
-            const ba = (bi / 4) * Math.PI * 2 + now * 2;
-            const br = z.radius * 0.4 + Math.sin(now * 6 + bi) * 2;
-            const bx = sx + Math.cos(ba) * br;
-            const by = cy + Math.sin(ba) * br;
-            ctx.fillStyle = `rgba(100,255,100,${0.4 + tpulse * 0.2})`;
-            ctx.beginPath();
-            ctx.arc(bx, by, 2 + Math.sin(now * 9 + bi) * 1, 0, Math.PI * 2);
-            ctx.fill();
-          }
+          // inner core
+          ctx.fillStyle = `rgba(220,240,255,${0.2 + ghostPulse * 0.1})`;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius * 0.5, 0, Math.PI * 2);
+          ctx.fill();
           // outline
-          ctx.strokeStyle = "#33cc33";
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = `rgba(150,200,255,${0.5 + ghostPulse * 0.2})`;
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
           ctx.stroke();
-          // toxic eyes (green)
+          // glowing eyes
           const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
-          const ex = Math.cos(ang) * (z.radius * 0.4);
-          const ey = Math.sin(ang) * (z.radius * 0.4);
+          const ex = Math.cos(ang) * (z.radius * 0.35);
+          const ey = Math.sin(ang) * (z.radius * 0.35);
+          const perpX = -Math.sin(ang) * 3, perpY = Math.cos(ang) * 3;
+          const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+          eglow.addColorStop(0, "rgba(200,230,255,0.9)");
+          eglow.addColorStop(1, "rgba(100,150,220,0)");
+          ctx.fillStyle = eglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#ddeeff";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (z.type === "underworld") {
+          // underworld ghost zombie: translucent, ethereal purple glow
+          const uwPulse = 0.4 + Math.sin(now * 4 + z.x * 0.01) * 0.2;
+          const uwgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.2, sx, cy, z.radius * 2.2);
+          uwgrd.addColorStop(0, `rgba(160,80,255,${0.3 * uwPulse})`);
+          uwgrd.addColorStop(0.5, `rgba(120,50,220,${0.12 * uwPulse})`);
+          uwgrd.addColorStop(1, "rgba(90,30,200,0)");
+          ctx.fillStyle = uwgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 2.2, 0, Math.PI * 2); ctx.fill();
+          // translucent body
+          ctx.fillStyle = `rgba(180,130,255,${0.35 + uwPulse * 0.15})`;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+          // inner core
+          ctx.fillStyle = `rgba(220,180,255,${0.2 + uwPulse * 0.1})`;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+          // outline
+          ctx.strokeStyle = `rgba(150,100,255,${0.5 + uwPulse * 0.2})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          // glowing eyes
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.35);
+          const ey = Math.sin(ang) * (z.radius * 0.35);
+          const perpX = -Math.sin(ang) * 3, perpY = Math.cos(ang) * 3;
+          const eglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+          eglow.addColorStop(0, "rgba(200,150,255,0.9)");
+          eglow.addColorStop(1, "rgba(120,50,220,0)");
+          ctx.fillStyle = eglow;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#eeccff";
+          ctx.beginPath();
+          ctx.arc(sx + ex + perpX, cy + ey + perpY, 2, 0, Math.PI * 2);
+          ctx.arc(sx + ex - perpX, cy + ey - perpY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (z.type === "redPoolMiniboss" || z.type === "bluePoolMiniboss") {
+          const isRed = z.type === "redPoolMiniboss";
+          const mainColor = isRed ? "#cc2200" : "#2244cc";
+          const glowColor = isRed ? "rgba(255,40,20," : "rgba(40,80,255,";
+          const eyeColor = isRed ? "#ff4422" : "#4488ff";
+          // large aura
+          const ppulse = 0.5 + Math.sin(now * 8) * 0.3;
+          const pgrd = ctx.createRadialGradient(sx, cy, z.radius * 0.3, sx, cy, z.radius * 3.0);
+          pgrd.addColorStop(0, `${glowColor}${(0.45 * ppulse)})`);
+          pgrd.addColorStop(0.4, `${glowColor}${(0.2 * ppulse)})`);
+          pgrd.addColorStop(1, `${glowColor}0)`);
+          ctx.fillStyle = pgrd;
+          ctx.beginPath(); ctx.arc(sx, cy, z.radius * 3.0, 0, Math.PI * 2); ctx.fill();
+          // body (pool ball)
+          const bgrd = ctx.createRadialGradient(sx - 3, sy - 3, 1, sx, sy, z.radius);
+          bgrd.addColorStop(0, isRed ? "#ff4422" : "#4488ff");
+          bgrd.addColorStop(0.7, mainColor);
+          bgrd.addColorStop(1, isRed ? "#881100" : "#112288");
+          ctx.fillStyle = bgrd;
+          ctx.beginPath(); ctx.arc(sx, sy, z.radius, 0, Math.PI * 2); ctx.fill();
+          // white circle (pool ball style)
+          ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.arc(sx, sy, z.radius * 0.35, 0, Math.PI * 2); ctx.fill();
+          // number
+          ctx.fillStyle = mainColor;
+          ctx.font = "bold 10px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(isRed ? "3" : "10", sx, sy + 4);
+          // outline
+          ctx.strokeStyle = isRed ? "#ff4422" : "#4488ff";
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(sx, sy, z.radius, 0, Math.PI * 2); ctx.stroke();
+          // secondary outline pulse
+          ctx.strokeStyle = `${glowColor}${(0.3 + ppulse * 0.3)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(sx, sy, z.radius + 4, 0, Math.PI * 2); ctx.stroke();
+          // glowing eyes
+          const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
+          const ex = Math.cos(ang) * (z.radius * 0.35);
+          const ey = Math.sin(ang) * (z.radius * 0.35);
           const perpX = -Math.sin(ang) * 4, perpY = Math.cos(ang) * 4;
-          const tglow = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 10);
-          tglow.addColorStop(0, "rgba(100,255,100,0.8)");
-          tglow.addColorStop(1, "rgba(50,200,50,0)");
-          ctx.fillStyle = tglow;
-          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 10, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = "#66ff66";
+          const egrd = ctx.createRadialGradient(sx + ex, cy + ey, 0, sx + ex, cy + ey, 8);
+          egrd.addColorStop(0, `${eyeColor}cc`);
+          egrd.addColorStop(1, `${eyeColor}00`);
+          ctx.fillStyle = egrd;
+          ctx.beginPath(); ctx.arc(sx + ex, cy + ey, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = eyeColor;
           ctx.beginPath();
           ctx.arc(sx + ex + perpX, cy + ey + perpY, 2.5, 0, Math.PI * 2);
           ctx.arc(sx + ex - perpX, cy + ey - perpY, 2.5, 0, Math.PI * 2);
           ctx.fill();
+          // health bar + label
+          const barW = z.radius * 2.4;
+          const barH = 5;
+          ctx.fillStyle = "rgba(0,0,0,0.6)";
+          ctx.fillRect(sx - barW / 2, sy - z.radius - 18, barW, barH);
+          ctx.fillStyle = isRed ? "#ff3322" : "#3366ff";
+          ctx.fillRect(sx - barW / 2, sy - z.radius - 18, barW * (z.hp / z.maxHp), barH);
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 9px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(isRed ? "RED BALL" : "BLUE BALL", sx, sy - z.radius - 22);
         } else {
-          const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-          ctx.fill();
-          // torn flesh highlight
-          ctx.fillStyle = "rgba(120,20,20,0.35)";
-          ctx.beginPath();
-          ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#7a0d0d";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          // eye glow
+          const litByFlashlight = isInFlashlight(z.x, z.y);
+          if (litByFlashlight) {
+            const color = z.type === "brute" ? "#3a1a1a" : z.type === "runner" ? "#4a3a1a" : "#3a3a2a";
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+            // torn flesh highlight
+            ctx.fillStyle = "rgba(120,20,20,0.35)";
+            ctx.beginPath();
+            ctx.arc(sx - z.radius * 0.4, cy - z.radius * 0.3, z.radius * 0.45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#7a0d0d";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(sx, cy, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          // eye glow (always visible)
           const ang = Math.atan2(s.player.y - z.y, s.player.x - z.x);
           const ex = Math.cos(ang) * (z.radius * 0.4);
           const ey = Math.sin(ang) * (z.radius * 0.4);
@@ -3147,10 +4738,10 @@ export function ZombieGame() {
           ctx.fill();
         }
         // hp bar
-        if (z.hp < z.maxHp) {
+        if (z.hp < z.maxHp && basicLit) {
           ctx.fillStyle = "#000";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, z.radius * 2, 4);
-          ctx.fillStyle = z.type === "fire" || z.type === "fireMiniboss" ? "#ff6600" : z.type === "toxic" || z.type === "toxicMiniboss" ? "#33cc33" : "#c93030";
+          ctx.fillStyle = z.type === "fire" || z.type === "fireMiniboss" ? "#ff6600" : z.type === "toxic" || z.type === "toxicMiniboss" ? "#33cc33" : z.type === "ghost" ? "#8ab4f8" : z.type === "underworld" ? "#aa66ff" : z.type === "redPoolMiniboss" ? "#ff3322" : z.type === "bluePoolMiniboss" ? "#3366ff" : "#c93030";
           ctx.fillRect(sx - z.radius, sy - z.radius - 8, (z.radius * 2) * (z.hp / z.maxHp), 4);
         }
       }
@@ -3198,14 +4789,10 @@ export function ZombieGame() {
         grd.addColorStop(0.5, `rgba(40,180,40,${pulse * 0.6})`);
         grd.addColorStop(1, "rgba(20,120,20,0)");
         ctx.fillStyle = grd;
-        ctx.beginPath();
-        ctx.arc(sx, sy, 10, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI * 2); ctx.fill();
         // solid core
         ctx.fillStyle = `rgba(60,220,60,${pulse})`;
-        ctx.beginPath();
-        ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
       }
     }
 
@@ -3248,31 +4835,126 @@ export function ZombieGame() {
     }
 
     function drawFog() {
-      // vignette + darkness
+      // vignette + darkness, scaled by light intensity setting
+      const intensity = settingsRef.current.lightIntensity;
+      const fogAlpha = 0.85 * (1 - intensity * 0.8);
       const grad = ctx.createRadialGradient(
         canvas.width / 2, canvas.height / 2, 100,
         canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) * 0.7
       );
       grad.addColorStop(0, "rgba(0,0,0,0)");
-      grad.addColorStop(1, "rgba(0,0,0,0.75)");
+      grad.addColorStop(1, `rgba(0,0,0,${fogAlpha})`);
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
     function drawMessage() {
       if (performance.now() < s.messageUntil && s.message) {
+        if (s.gameMode === "split") {
+          // In split mode, only show if target matches this viewport (0 = both)
+          if (s.messageTarget !== 0 && s.messageTarget !== (s._vpIsP2 ? 2 : 1)) return;
+        }
+        const cx = s.gameMode === "split" ? canvas.width / 4 : canvas.width / 2;
+        const fontSize = s.gameMode === "split" ? 36 : 48;
         ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.font = "bold 48px 'Courier New', monospace";
+        ctx.font = `bold ${fontSize}px 'Courier New', monospace`;
         ctx.textAlign = "center";
-        ctx.fillText(s.message, canvas.width / 2 + 2, canvas.height / 2 - 100 + 2);
+        ctx.fillText(s.message, cx + 2, canvas.height / 2 - 100 + 2);
         ctx.fillStyle = "#c9a24a";
-        ctx.fillText(s.message, canvas.width / 2, canvas.height / 2 - 100);
+        ctx.fillText(s.message, cx, canvas.height / 2 - 100);
       }
     }
 
     function drawHitFlash() {
       if (s.hitFlash > 0.01) {
         ctx.fillStyle = `rgba(200,20,20,${s.hitFlash * 0.4})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    function drawJumpscare() {
+      const until = s.jumpscareUntil;
+      if (!until) return;
+      const now = performance.now();
+      const remaining = until - now;
+      if (remaining <= 0) return;
+      const elapsed = 1500 - remaining;
+      const progress = elapsed / 1500;
+
+      // heavy screen shake that tapers off
+      s.camera.shake = Math.max(s.camera.shake, 16 * Math.max(0, 1 - progress * 1.2));
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+
+      // initial white flash (first 100ms)
+      if (elapsed < 100) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${1 - elapsed / 100})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      // flicker: random intensity changes
+      const flicker = Math.random() < 0.2 ? 0.95 : 0.65;
+
+      // dark red/black overlay
+      ctx.fillStyle = `rgba(60, 0, 0, ${flicker * (1 - progress * 0.3)})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // random inversion flashes
+      if (Math.random() < 0.08) {
+        ctx.fillStyle = `rgba(255, 255, 255, 0.2)`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // scary face - two glowing eyes
+      const eyeSpacing = 55;
+      const eyeY = cy - 35;
+      const eyeSize = 20 + Math.sin(elapsed * 0.03) * 5;
+
+      // left eye
+      ctx.fillStyle = `rgba(255, 0, 0, ${flicker})`;
+      ctx.beginPath();
+      ctx.ellipse(cx - eyeSpacing, eyeY, eyeSize, eyeSize * 1.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(0, 0, 0, ${flicker})`;
+      ctx.beginPath();
+      ctx.ellipse(cx - eyeSpacing, eyeY + 2, eyeSize * 0.35, eyeSize * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // right eye
+      ctx.fillStyle = `rgba(255, 0, 0, ${flicker})`;
+      ctx.beginPath();
+      ctx.ellipse(cx + eyeSpacing, eyeY, eyeSize, eyeSize * 1.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(0, 0, 0, ${flicker})`;
+      ctx.beginPath();
+      ctx.ellipse(cx + eyeSpacing, eyeY + 2, eyeSize * 0.35, eyeSize * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // jagged mouth
+      ctx.strokeStyle = `rgba(255, 0, 0, ${flicker * 0.9})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx - 85, cy + 40);
+      const teeth = 10;
+      for (let i = 0; i <= teeth; i++) {
+        const tx = cx - 85 + (170 / teeth) * i;
+        const ty = cy + 40 + (i % 2 === 0 ? 0 : 22 + Math.sin(elapsed * 0.01 + i) * 8);
+        ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+
+      // scan lines
+      ctx.fillStyle = `rgba(0, 0, 0, 0.12)`;
+      for (let y = 0; y < canvas.height; y += 4) {
+        ctx.fillRect(0, y, canvas.width, 2);
+      }
+
+      // fade to black in the last 300ms
+      if (remaining < 300) {
+        const fadeAlpha = 1 - remaining / 300;
+        ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
     }
@@ -3364,17 +5046,6 @@ export function ZombieGame() {
           // unlit wick
           ctx.fillStyle = "#2a1a0a";
           ctx.fillRect(sx - 1.5, sy - 52, 3, 10);
-          // label indicator (pulsing ring to show where to kill fire zombie)
-          const pulse = 0.3 + Math.sin(now / 400) * 0.15;
-          ctx.strokeStyle = `rgba(255,100,40,${pulse})`;
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([6, 4]);
-          ctx.beginPath(); ctx.arc(sx, sy, TORCH_LIGHT_RADIUS, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          // label
-          ctx.fillStyle = `rgba(255,140,60,${pulse + 0.3})`;
-          ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
-          ctx.fillText("KILL FIRE ZOMBIE HERE", sx, sy + TORCH_LIGHT_RADIUS + 14);
         }
       }
     }
@@ -3401,6 +5072,103 @@ export function ZombieGame() {
           const rr = 3 + Math.sin(t + i) * 2;
           ctx.beginPath(); ctx.arc(bx, by, Math.abs(rr), 0, Math.PI * 2); ctx.fill();
         }
+      }
+    }
+
+    function drawPortal() {
+      if (!s.portalActive || !s.portalPos) return;
+      const px = s.portalPos.x - s.camera.x, py = s.portalPos.y - s.camera.y;
+      if (px < -200 || py < -200 || px > canvas.width + 200 || py > canvas.height + 200) return;
+      const now = performance.now() / 1000;
+      const pulse = 0.7 + Math.sin(now * 3) * 0.3;
+      const rot = now * 1.5;
+      // outer glow ring
+      const outerGrd = ctx.createRadialGradient(px, py, 40, px, py, 120);
+      outerGrd.addColorStop(0, `rgba(120,40,200,${0.35 * pulse})`);
+      outerGrd.addColorStop(0.4, `rgba(80,20,160,${0.2 * pulse})`);
+      outerGrd.addColorStop(0.7, `rgba(50,10,120,${0.1 * pulse})`);
+      outerGrd.addColorStop(1, "rgba(30,5,80,0)");
+      ctx.fillStyle = outerGrd;
+      ctx.beginPath(); ctx.arc(px, py, 120, 0, Math.PI * 2); ctx.fill();
+      // swirling energy rings
+      for (let i = 0; i < 4; i++) {
+        const ringR = 50 + i * 15 + Math.sin(now * 2 + i) * 8;
+        const alpha = (0.3 - i * 0.06) * pulse;
+        ctx.strokeStyle = `rgba(160,80,255,${alpha})`;
+        ctx.lineWidth = 2.5 - i * 0.4;
+        ctx.beginPath();
+        ctx.arc(px, py, ringR, rot + i * 0.5, rot + i * 0.5 + Math.PI * 1.4);
+        ctx.stroke();
+      }
+      // dark vortex center
+      const innerGrd = ctx.createRadialGradient(px, py, 0, px, py, 45);
+      innerGrd.addColorStop(0, "rgba(10,0,20,0.95)");
+      innerGrd.addColorStop(0.5, "rgba(40,10,80,0.7)");
+      innerGrd.addColorStop(0.8, "rgba(80,30,140,0.3)");
+      innerGrd.addColorStop(1, "rgba(120,50,200,0)");
+      ctx.fillStyle = innerGrd;
+      ctx.beginPath(); ctx.arc(px, py, 45, 0, Math.PI * 2); ctx.fill();
+      // inner energy core
+      const coreGrd = ctx.createRadialGradient(px, py, 0, px, py, 20);
+      coreGrd.addColorStop(0, `rgba(180,100,255,${0.5 * pulse})`);
+      coreGrd.addColorStop(1, "rgba(120,40,200,0)");
+      ctx.fillStyle = coreGrd;
+      ctx.beginPath(); ctx.arc(px, py, 20, 0, Math.PI * 2); ctx.fill();
+      // floating particles
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2 + now * 0.8;
+        const dist = 55 + Math.sin(now * 2.5 + i * 1.3) * 20;
+        const ppx = px + Math.cos(angle) * dist;
+        const ppy = py + Math.sin(angle) * dist;
+        const size = 2 + Math.sin(now * 4 + i) * 1;
+        ctx.fillStyle = `rgba(180,120,255,${0.6 * pulse})`;
+        ctx.beginPath(); ctx.arc(ppx, ppy, size, 0, Math.PI * 2); ctx.fill();
+      }
+      // interaction prompt
+      const dpp = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+      const dx = dpp.x - s.portalPos.x, dy = dpp.y - s.portalPos.y;
+      if (dx * dx + dy * dy < 90 * 90) {
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 14px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("[E] ENTER THE DARK AETHER", px, py - 75);
+      }
+    }
+
+    function drawGlowingCrate() {
+      if (!s.glowingCrate) return;
+      const gc = s.glowingCrate;
+      const sx = gc.x - s.camera.x, sy = gc.y - s.camera.y;
+      if (sx + gc.w < -20 || sy + gc.h < -20 || sx > canvas.width + 20 || sy > canvas.height + 20) return;
+      const now = performance.now() / 1000;
+      const pulse = 0.6 + Math.sin(now * 4) * 0.4;
+      // purple glow aura
+      const glowGrd = ctx.createRadialGradient(sx + gc.w / 2, sy + gc.h / 2, 10, sx + gc.w / 2, sy + gc.h / 2, 60);
+      glowGrd.addColorStop(0, `rgba(160,80,255,${0.3 * pulse})`);
+      glowGrd.addColorStop(0.5, `rgba(120,40,200,${0.15 * pulse})`);
+      glowGrd.addColorStop(1, "rgba(80,20,160,0)");
+      ctx.fillStyle = glowGrd;
+      ctx.beginPath(); ctx.arc(sx + gc.w / 2, sy + gc.h / 2, 60, 0, Math.PI * 2); ctx.fill();
+      // crate body (brown with purple tint)
+      ctx.fillStyle = `rgba(90,50,30,${0.9 + pulse * 0.1})`;
+      ctx.fillRect(sx, sy, gc.w, gc.h);
+      // purple energy lines on crate
+      ctx.strokeStyle = `rgba(160,80,255,${0.5 + pulse * 0.3})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy); ctx.lineTo(sx + gc.w, sy + gc.h);
+      ctx.moveTo(sx + gc.w, sy); ctx.lineTo(sx, sy + gc.h);
+      ctx.stroke();
+      // outline
+      ctx.strokeStyle = `rgba(180,100,255,${0.6 + pulse * 0.3})`;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(sx, sy, gc.w, gc.h);
+      // HP indicator dots
+      for (let i = 0; i < gc.hp; i++) {
+        ctx.fillStyle = `rgba(180,120,255,${0.8 * pulse})`;
+        ctx.beginPath();
+        ctx.arc(sx + 10 + i * 14, sy + gc.h + 10, 4, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
@@ -3474,10 +5242,25 @@ export function ZombieGame() {
     function drawBossBullets() {
       for (const b of s.bossBullets) {
         const sx = b.x - s.camera.x, sy = b.y - s.camera.y;
-        ctx.fillStyle = "#ff4020";
-        ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "rgba(255,180,80,0.6)";
-        ctx.beginPath(); ctx.arc(sx, sy, 9, 0, Math.PI * 2); ctx.fill();
+        if (b.color) {
+          // colored pool ball
+          ctx.fillStyle = b.color;
+          ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.5)";
+          ctx.beginPath(); ctx.arc(sx - 1, sy - 1, 2, 0, Math.PI * 2); ctx.fill();
+          // glow
+          const g = ctx.createRadialGradient(sx, sy, 3, sx, sy, 12);
+          g.addColorStop(0, b.color + "88");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(sx, sy, 12, 0, Math.PI * 2); ctx.fill();
+        } else {
+          // default fire bullet
+          ctx.fillStyle = "#ff4020";
+          ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,180,80,0.6)";
+          ctx.beginPath(); ctx.arc(sx, sy, 9, 0, Math.PI * 2); ctx.fill();
+        }
       }
     }
 
@@ -3488,9 +5271,17 @@ export function ZombieGame() {
       }
     }
 
-    function render() {
-      ctx.fillStyle = s.bossMode ? "#1a0505" : "#0a0d0a";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    function renderWorld() {
+      const zoom = settingsRef.current.cameraZoom === "zoomed" ? 1.4 : 1;
+      ctx.save();
+      if (zoom !== 1) {
+        const vp = (s.gameMode === "split" && s._vpIsP2) ? s.player2 : s.player;
+        const px = vp.x - s.camera.x;
+        const py = vp.y - s.camera.y;
+        ctx.translate(px, py);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-px, -py);
+      }
       drawGrid();
       drawCaveArea();
       drawGolfRoom();
@@ -3501,6 +5292,8 @@ export function ZombieGame() {
       else drawBossAmmoBoxes();
       drawPickups();
       drawObstacles();
+      drawGlowingCrate();
+      drawPortal();
       drawGenerator();
       drawTotems();
       drawTorches();
@@ -3515,8 +5308,59 @@ export function ZombieGame() {
       drawFog();
       drawFlashlightOverlay();
       drawHitFlash();
+      drawJumpscare();
       drawTransitionFlash();
       drawMessage();
+      ctx.restore();
+    }
+
+    function render() {
+      ctx.fillStyle = s.bossMode ? "#1a0505" : "#0a0d0a";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (s.gameMode === "split" && s.started) {
+        const halfW = Math.floor(canvas.width / 2);
+        const origCamera = s.camera;
+
+        // ─── Player 1 viewport (left half) ────────────────────────────────
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, halfW, canvas.height);
+        ctx.clip();
+        s.camera = origCamera;
+        s._vpIsP2 = false;
+        renderWorld();
+        // P1 viewport border
+        ctx.strokeStyle = "#c9a24a";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, halfW - 2, canvas.height - 2);
+        ctx.restore();
+
+        // ─── Player 2 viewport (right half) ───────────────────────────────
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(halfW, 0, halfW, canvas.height);
+        ctx.clip();
+        ctx.translate(halfW, 0);
+        s.camera = s.camera2;
+        s._vpIsP2 = true;
+        renderWorld();
+        ctx.restore();
+
+        // Restore originals
+        s.camera = origCamera;
+
+        // Draw divider line
+        ctx.fillStyle = "#c9a24a";
+        ctx.fillRect(halfW - 1, 0, 2, canvas.height);
+
+        // P2 viewport border
+        ctx.strokeStyle = "#4a9aff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(halfW + 1, 1, halfW - 2, canvas.height - 2);
+      } else {
+        renderWorld();
+      }
     }
 
 
@@ -3524,7 +5368,24 @@ export function ZombieGame() {
     const loop = (t: number) => {
       const dt = Math.min(0.05, (t - (s.lastTime || t)) / 1000);
       s.lastTime = t;
+      // Always poll for controllers (needed for menu lobby detection)
+      detectGamepad();
       update(dt);
+
+      // Jumpscare complete: transition to game over screen
+      if (s.gameOver && s.jumpscareUntil && performance.now() >= s.jumpscareUntil) {
+        s.jumpscareUntil = 0;
+        soundEngine.setMusic("menu");
+        setUiState((u) => ({ ...u, gameOver: true, hp: 0, kills: s.kills, shotsFired: s.shotsFired, shotsHit: s.shotsHit }));
+      }
+
+      // Apply camera shake (needed during jumpscare since update() returns early)
+      if (s.camera.shake > 0) {
+        s.camera.x += (Math.random() - 0.5) * s.camera.shake;
+        s.camera.y += (Math.random() - 0.5) * s.camera.shake;
+        s.camera.shake *= 0.85;
+        if (s.camera.shake < 0.1) s.camera.shake = 0;
+      }
 
       // Fireworks phase: update particles and spawn bursts
       if (s.showingFireworks) {
@@ -3578,6 +5439,8 @@ export function ZombieGame() {
       window.removeEventListener("keyup", ku);
       window.removeEventListener("mouseup", mu);
       window.removeEventListener("blur", mu);
+      window.removeEventListener("gamepadconnected", onGamepadConnected);
+      window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
     };
   }, []);
 
@@ -3627,6 +5490,14 @@ export function ZombieGame() {
                 Z: {uiState.zombiesLeft}
               </div>
             )}
+            {isMobile && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="pointer-events-auto mt-1 p-1 text-[#8a8a6a] hover:text-[#c9a24a] transition-colors"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            )}
           </div>
 
           <div className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 font-mono pointer-events-none text-center">
@@ -3636,11 +5507,25 @@ export function ZombieGame() {
             </div>
           </div>
 
-          <div className="absolute top-2 right-2 sm:top-4 sm:right-4 font-mono text-right pointer-events-none">
+          <div
+            className="absolute font-mono text-right pointer-events-none"
+            style={{
+              top: "0.5rem",
+              right: gameMode === "split" ? "calc(50% + 0.5rem)" : "0.5rem",
+            }}
+          >
             <div className="text-base sm:text-2xl font-bold text-[#c9a24a] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
               {uiState.points}
               <span className="text-[10px] sm:text-base"> PTS</span>
             </div>
+            {!isMobile && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="pointer-events-auto mt-1 px-2 py-0.5 text-[10px] sm:text-xs text-[#8a8a6a] border border-[#3a3a1a] hover:border-[#c9a24a] hover:text-[#c9a24a] transition-colors bg-black/40"
+              >
+                SETTINGS
+              </button>
+            )}
           </div>
 
           {/* Health — bottom on desktop, top-center on touch devices (portrait & landscape phones) */}
@@ -3674,8 +5559,9 @@ export function ZombieGame() {
             className={
               isMobile
                 ? "absolute top-11 right-2 font-mono text-right pointer-events-none"
-                : "absolute bottom-4 right-4 font-mono text-right pointer-events-none"
+                : "absolute bottom-4 font-mono text-right pointer-events-none"
             }
+            style={!isMobile ? { right: gameMode === "split" ? "calc(50% + 1rem)" : "1rem" } : undefined}
           >
             <div className="bg-black/60 border border-[#3a3a1a] px-2 py-1 sm:px-4 sm:py-2 rounded-sm">
               <div className="text-[9px] sm:text-xs text-[#8a8a6a] truncate max-w-[110px] sm:max-w-none">
@@ -3690,6 +5576,53 @@ export function ZombieGame() {
               )}
             </div>
           </div>
+
+          {/* ─── Player 2 HUD (split-screen only) ─── */}
+          {gameMode === "split" && (
+            <>
+              {/* P2 Health — bottom-left of right half */}
+              <div className="absolute bottom-4 font-mono pointer-events-none" style={{ left: "calc(50% + 1rem)" }}>
+                <div className="bg-black/60 border border-[#1a2a4a] px-4 py-2 rounded-sm">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="text-xs text-[#4a9aff]">P2 HEALTH</div>
+                  </div>
+                  <div className="w-56 h-3 bg-[#0a0a1a] border border-[#1a1a3a]">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#103080] to-[#3060c0] transition-all"
+                      style={{ width: `${uiState.hp2}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-[#6090c0] mt-1 text-left">
+                    {uiState.hp2} / 100
+                  </div>
+                </div>
+              </div>
+
+              {/* P2 Points — top-right of right half */}
+              <div className="absolute top-2 right-2 sm:top-4 sm:right-4 font-mono text-right pointer-events-none">
+                <div className="text-base sm:text-2xl font-bold text-[#4a9aff] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                  {uiState.points2}
+                  <span className="text-[10px] sm:text-base text-[#3a6a9a]"> PTS</span>
+                </div>
+              </div>
+
+              {/* P2 Weapon — bottom-right of right half */}
+              <div className="absolute right-4 bottom-20 font-mono text-right pointer-events-none">
+                <div className="bg-black/60 border border-[#1a2a4a] px-4 py-2 rounded-sm">
+                  <div className="text-xs text-[#4a9aff] truncate">
+                    P2 — {uiState.weaponName2.toUpperCase()}
+                  </div>
+                  <div className="text-2xl font-bold text-[#4a9aff] leading-tight">
+                    {uiState.reloading2 ? "..." : uiState.mag2}
+                    <span className="text-lg text-[#3a6a9a]"> / {uiState.reserve2}</span>
+                  </div>
+                  {uiState.reloading2 && (
+                    <div className="text-xs text-[#4488ff] animate-pulse">RELOADING</div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -3701,26 +5634,105 @@ export function ZombieGame() {
               DEAD SECTOR
             </h1>
             <p className="text-[#a89060] mt-2 tracking-[0.4em] text-sm">SURVIVE THE UNDEAD</p>
-            {showHelp && (
+            {showHelp && menuMode === "main" && (
               <div className="mt-10 text-left text-[#c0c0a0] text-sm space-y-2 bg-black/40 border border-[#3a3a1a] p-6">
-                <div><span className="text-[#c9a24a] font-bold">WASD</span> — Move</div>
-                <div><span className="text-[#c9a24a] font-bold">MOUSE</span> — Aim</div>
-                <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
-                <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
-                <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
+                {isMobile ? (
+                  <>
+                    <div className="text-[#c9a24a] font-bold text-center tracking-widest">
+                      MOBILE CONTROLS
+                    </div>
+                    <div className="text-[#c0c0a0] text-center text-xs pt-1">
+                      Use the on-screen virtual controls to play.
+                    </div>
+                    <div className="pt-3"><span className="text-[#c9a24a] font-bold">LEFT STICK</span> — Move</div>
+                    <div><span className="text-[#c9a24a] font-bold">RIGHT STICK</span> — Aim &amp; Fire</div>
+                    <div><span className="text-[#c9a24a] font-bold">RELOAD BUTTON</span> — Reload</div>
+                    <div><span className="text-[#c9a24a] font-bold">USE BUTTON</span> — Buy weapons / ammo at stations</div>
+                    <div className="pt-2 text-[#8a8a6a] text-xs">
+                      Kill zombies to earn points. Complete Tasks to get to the boss.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div><span className="text-[#c9a24a] font-bold">WASD</span> — Move</div>
+                    <div><span className="text-[#c9a24a] font-bold">MOUSE</span> — Aim</div>
+                    <div><span className="text-[#c9a24a] font-bold">LEFT CLICK</span> — Fire</div>
+                    <div><span className="text-[#c9a24a] font-bold">R</span> — Reload</div>
+                    <div><span className="text-[#c9a24a] font-bold">E</span> — Buy weapons / ammo at stations</div>
+                    <div className="pt-2 text-[#8a8a6a] text-xs">
+                      Kill zombies to earn points. Complete Tasks to get to the boss.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {menuMode === "splitLobby" && (
+              <div className="mt-8 text-left text-[#c0c0a0] text-sm space-y-2 bg-black/40 border border-[#3a3a1a] p-6">
+                <div className="text-[#c9a24a] font-bold text-center tracking-widest">
+                  SPLIT SCREEN
+                </div>
+                <div className="text-[#c0c0a0] text-center text-xs pt-1">
+                  Connect a controller for Player 2, then deploy.
+                </div>
+                <div className="pt-3"><span className="text-[#c9a24a] font-bold">PLAYER 1</span> — WASD + Mouse</div>
+                <div><span className="text-[#c9a24a] font-bold">PLAYER 2</span> — Controller (Left Stick / Right Stick)</div>
                 <div className="pt-2 text-[#8a8a6a] text-xs">
-                  Kill zombies to earn points. Complete Tasks to get to the boss.
+                  {controllerConnected ? (
+                    <span className="text-[#5a5]">Controller connected — ready to deploy!</span>
+                  ) : (
+                    "No controller detected yet. Connect one via USB or Bluetooth."
+                  )}
                 </div>
               </div>
             )}
-            <button
-              onClick={() => {
-                startGameRef.current();
-              }}
-              className="mt-10 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
-            >
-              DEPLOY
-            </button>
+
+            <div className="mt-10 flex flex-col items-center gap-4">
+              {menuMode === "main" ? (
+                <>
+                  <button
+                    onClick={() => {
+                      stateRef.current.gameMode = "single";
+                      setGameMode("single");
+                      startGameRef.current();
+                    }}
+                    className="w-64 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest border border-[#c9a24a] hover:bg-[#e0b85a] transition-colors"
+                  >
+                    SINGLE PLAYER
+                  </button>
+                  <button
+                    onClick={() => setMenuMode("splitLobby")}
+                    className="w-64 px-10 py-3 bg-transparent text-[#c9a24a] font-bold tracking-widest border border-[#c9a24a] hover:bg-[#c9a24a]/10 transition-colors"
+                  >
+                    SPLIT SCREEN
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      stateRef.current.gameMode = "split";
+                      setGameMode("split");
+                      startGameRef.current();
+                    }}
+                    className="w-64 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest border border-[#c9a24a] hover:bg-[#e0b85a] transition-colors"
+                  >
+                    DEPLOY
+                  </button>
+                  <button
+                    onClick={() => setMenuMode("main")}
+                    className="w-64 px-10 py-3 bg-transparent text-[#8a8a6a] font-bold tracking-widest border border-[#3a3a1a] hover:border-[#c9a24a] hover:text-[#c9a24a] transition-colors"
+                  >
+                    BACK
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="w-64 px-10 py-3 bg-transparent text-[#c9a24a] font-bold tracking-widest border border-[#c9a24a] hover:bg-[#c9a24a]/10 transition-colors"
+              >
+                SETTINGS
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3783,7 +5795,7 @@ export function ZombieGame() {
                     YOU DIED
                   </h1>
                   <p className="text-[#a89060] mt-3 text-xl tracking-wider">
-                    SURVIVED {uiState.round} ROUND{uiState.round !== 1 ? "S" : ""}
+                    SURVIVED {uiState.actualRound} ROUND{uiState.actualRound !== 1 ? "S" : ""}
                   </p>
                   <div className="mt-6 space-y-2 text-sm">
                     <div className="flex justify-between border-b border-[#3a1a1a] pb-2">
@@ -3810,17 +5822,31 @@ export function ZombieGame() {
             )}
             <button
               onClick={restart}
-              className="mt-8 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest hover:bg-[#e0b85a] transition-colors"
+              className="mt-8 w-64 px-10 py-3 bg-[#c9a24a] text-black font-bold tracking-widest border border-[#c9a24a] hover:bg-[#e0b85a] transition-colors"
             >
               REDEPLOY
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="mt-4 w-64 px-10 py-3 bg-transparent text-[#c9a24a] font-bold tracking-widest border border-[#c9a24a] hover:bg-[#c9a24a]/10 transition-colors"
+            >
+              SETTINGS
             </button>
           </div>
         </div>
       )}
 
       {isMobile && uiState.started && !uiState.gameOver && (
-        <TouchControls stateRef={stateRef} canvasRef={canvasRef} />
+        <TouchControls stateRef={stateRef} canvasRef={canvasRef} thumbstickSize={settings.thumbstickSize} />
       )}
+
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settings={settings}
+        onUpdate={updateSettings}
+        isMobile={isMobile}
+      />
     </div>
   );
 }
@@ -3829,9 +5855,10 @@ type TouchControlsProps = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stateRef: React.MutableRefObject<any>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  thumbstickSize: "normal" | "big";
 };
 
-function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
+function TouchControls({ stateRef, canvasRef, thumbstickSize }: TouchControlsProps) {
   const moveRef = useRef<HTMLDivElement>(null);
   const aimRef = useRef<HTMLDivElement>(null);
   const [moveKnob, setMoveKnob] = useState({ x: 0, y: 0, active: false });
@@ -3842,7 +5869,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const JOY_RADIUS = 55;
+    const JOY_RADIUS = thumbstickSize === "big" ? 82.5 : 55;
     const MOVE_DEADZONE = 0.25;
 
     let movePointerId: number | null = null;
@@ -3966,15 +5993,18 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
       clearMoveKeys();
       s.mouse.down = false;
     };
-  }, [stateRef, canvasRef]);
+  }, [stateRef, canvasRef, thumbstickSize]);
 
   const tapKey = (key: string) => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key }));
     window.dispatchEvent(new KeyboardEvent("keyup", { key }));
   };
 
+  const big = thumbstickSize === "big";
   const joyBase =
-    "absolute w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-black/40 border-2 border-[#c9a24a]/60 touch-none pointer-events-auto";
+    `absolute rounded-full bg-black/40 border-2 border-[#c9a24a]/60 touch-none pointer-events-auto ${
+      big ? "w-[168px] h-[168px] sm:w-[192px] sm:h-[192px]" : "w-28 h-28 sm:w-32 sm:h-32"
+    }`;
   const knobStyle = (k: { x: number; y: number; active: boolean }) => ({
     transform: `translate(-50%, -50%) translate(${k.x}px, ${k.y}px)`,
     opacity: k.active ? 1 : 0.7,
@@ -3988,7 +6018,9 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
         className={`${joyBase} left-4 bottom-4 [@media(orientation:portrait)]:bottom-[calc(120px+env(safe-area-inset-bottom))] sm:left-6 sm:bottom-24`}
       >
         <div
-          className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c9a24a]/80 border border-black/40"
+          className={`absolute top-1/2 left-1/2 rounded-full bg-[#c9a24a]/80 border border-black/40 ${
+            big ? "w-[72px] h-[72px] sm:w-[84px] sm:h-[84px]" : "w-12 h-12 sm:w-14 sm:h-14"
+          }`}
           style={knobStyle(moveKnob)}
         />
       </div>
@@ -3999,7 +6031,9 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
         className={`${joyBase} right-4 bottom-4 [@media(orientation:portrait)]:bottom-[calc(120px+env(safe-area-inset-bottom))] sm:right-6 sm:bottom-24`}
       >
         <div
-          className="absolute top-1/2 left-1/2 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#c93030]/80 border border-black/40"
+          className={`absolute top-1/2 left-1/2 rounded-full bg-[#c93030]/80 border border-black/40 ${
+            big ? "w-[72px] h-[72px] sm:w-[84px] sm:h-[84px]" : "w-12 h-12 sm:w-14 sm:h-14"
+          }`}
           style={knobStyle(aimKnob)}
         />
         <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] sm:text-[10px] font-mono text-[#c9a24a] tracking-widest whitespace-nowrap">
@@ -4007,15 +6041,23 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
         </div>
       </div>
 
-      {/* Action buttons — stacked above the aim joystick on portrait phones,
-          placed inline to the left of the aim stick on short (landscape) viewports
-          so they never overflow the top of the screen. */}
+      {/* Action buttons — stacked vertically between thumbsticks in portrait (big only), horizontal otherwise */}
       <div
-        className="absolute right-36 bottom-6 flex-row gap-2 pointer-events-auto flex
-                   [@media(orientation:portrait)]:bottom-[calc(180px+env(safe-area-inset-bottom))]
-                   [@media(orientation:landscape)]:left-1/2 [@media(orientation:landscape)]:right-auto
-                   [@media(orientation:landscape)]:-translate-x-1/2 [@media(orientation:landscape)]:bottom-[100px]"
+        className={`absolute pointer-events-auto w-max flex items-center gap-2
+                   ${big
+                     ? `[@media(orientation:portrait)]:flex-col-reverse
+                        [@media(orientation:portrait)]:left-1/2
+                        [@media(orientation:portrait)]:-translate-x-1/2
+                        [@media(orientation:portrait)]:bottom-[calc(140px+env(safe-area-inset-bottom))]`
+                     : `[@media(orientation:portrait)]:flex-row [@media(orientation:portrait)]:flex-nowrap
+                        [@media(orientation:portrait)]:left-1/2
+                        [@media(orientation:portrait)]:-translate-x-1/2
+                        [@media(orientation:portrait)]:bottom-[calc(180px+env(safe-area-inset-bottom))]`}
+                   [@media(orientation:landscape)]:flex-row [@media(orientation:landscape)]:flex-nowrap
+                   [@media(orientation:landscape)]:left-1/2 [@media(orientation:landscape)]:-translate-x-1/2
+                   [@media(orientation:landscape)]:bottom-[100px]`}
       >
+
         <button
           onPointerDown={(e) => {
             e.preventDefault();
@@ -4035,6 +6077,7 @@ function TouchControls({ stateRef, canvasRef }: TouchControlsProps) {
           USE
         </button>
       </div>
+
     </div>
   );
 }
